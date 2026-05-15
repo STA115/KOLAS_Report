@@ -1,173 +1,73 @@
 ﻿// =========================
-// AI Agent Script 시작
+// AI Agent Script Start
 // =========================
 import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
 import dotenv from 'dotenv';
 import mysql from 'mysql2/promise';
+import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 // Load local overrides first, then fallback to .env.
 dotenv.config({ path: '.env.local' });
 dotenv.config();
 
-// MySQL 연결 풀 생성
-const requiredDbEnvKeys = ['DB_USER', 'DB_PASSWORD', 'DB_NAME'];
-const missingDbEnvKeys = requiredDbEnvKeys.filter((key) => !String(process.env[key] || '').trim());
-if (missingDbEnvKeys.length > 0) {
-	throw new Error(`Missing required DB env vars: ${missingDbEnvKeys.join(', ')}`);
+const getRequiredEnv = (name) => {
+	const value = String(process.env[name] || '').trim();
+	if (!value) {
+		throw new Error(`Missing required environment variable: ${name}`);
+	}
+	return value;
+};
+
+const dbPort = Number(getRequiredEnv('DB_PORT'));
+if (!Number.isInteger(dbPort) || dbPort <= 0) {
+	throw new Error('Invalid DB_PORT. It must be a positive integer.');
 }
 
-const dbPort = Number(process.env.DB_PORT || 3306);
-const dbConnectionLimit = Number(process.env.DB_CONNECTION_LIMIT || 10);
+// MySQL connection pool
 const pool = mysql.createPool({
-	host: process.env.DB_HOST || '127.0.0.1',
-	port: Number.isFinite(dbPort) ? dbPort : 3306,
-	user: String(process.env.DB_USER),
-	password: String(process.env.DB_PASSWORD),
-	database: String(process.env.DB_NAME),
+	host: getRequiredEnv('DB_HOST'),
+	port: dbPort,
+	user: getRequiredEnv('DB_USER'),
+	password: getRequiredEnv('DB_PASSWORD'),
+	database: getRequiredEnv('DB_NAME'),
 	waitForConnections: true,
-	connectionLimit: Number.isFinite(dbConnectionLimit) ? dbConnectionLimit : 10,
+	connectionLimit: 10,
 	queueLimit: 0
 });
 
-// MySQL 연결 테스트
+// MySQL connection test
 pool.getConnection()
 	.then(connection => {
-		console.log('[MySQL] 연결 성공');
+		console.log('[DB] MySQL connection successful');
 		connection.release();
 	})
 	.catch(err => {
-		console.error('[MySQL] 연결 실패:', err.message);
+		console.error('[DB] MySQL connection failed:', err.message);
 	});
 
 
 const app = express();
-const defaultAllowedOrigins = [
-	'http://localhost:3000',
-	'http://localhost:5173',
-	'https://sta115.github.io'
-];
-const allowedOrigins = (process.env.CORS_ORIGINS || defaultAllowedOrigins.join(','))
+const configuredCorsOrigins = String(process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || '')
 	.split(',')
 	.map(origin => origin.trim())
 	.filter(Boolean);
-
+app.use(helmet());
 app.use(cors({
 	origin: (origin, callback) => {
-		// Allow non-browser clients or same-origin requests with no Origin header.
-		if (!origin) {
-			callback(null, true);
-			return;
-		}
-		if (allowedOrigins.includes(origin)) {
-			callback(null, true);
-			return;
-		}
-		callback(new Error(`Not allowed by CORS: ${origin}`));
+		// Allow same-origin/non-browser requests and allow all origins when list is not configured.
+		if (!origin || configuredCorsOrigins.length === 0) return callback(null, true);
+		if (configuredCorsOrigins.includes(origin)) return callback(null, true);
+		return callback(new Error('Not allowed by CORS'));
 	},
-	methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-	allowedHeaders: ['Content-Type', 'Authorization']
+	credentials: true
 }));
+app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
-
-const loginHomeUrl = process.env.LOGIN_HOME_URL || process.env.APP_URL || 'https://sta115.github.io/TRP/';
-
-const escapeHtml = (value) => String(value ?? '')
-	.replace(/&/g, '&amp;')
-	.replace(/</g, '&lt;')
-	.replace(/>/g, '&gt;')
-	.replace(/"/g, '&quot;')
-	.replace(/'/g, '&#39;');
-
-const resolveNextUrl = (rawNext) => {
-	const fallback = loginHomeUrl;
-	const value = String(rawNext ?? '').trim();
-	if (!value) return fallback;
-	if (value.startsWith('/')) return value;
-	try {
-		const parsed = new URL(value);
-		if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-			return parsed.toString();
-		}
-	} catch {
-		// noop
-	}
-	return fallback;
-};
-
-const buildLoginPageHtml = ({ error = '', next = '' } = {}) => `<!doctype html>
-<html lang="ko">
-<head>
-	<meta charset="utf-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1" />
-	<title>로그인 확인</title>
-	<style>
-		body { font-family: Arial, sans-serif; background: #f4f7fb; margin: 0; }
-		.wrap { max-width: 380px; margin: 72px auto; background: #fff; border: 1px solid #d5e3f7; border-radius: 10px; padding: 24px; }
-		h1 { margin: 0 0 20px; font-size: 20px; color: #1457ba; text-align: center; }
-		label { display: block; margin: 12px 0 6px; font-size: 14px; color: #333; }
-		input { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #9dbbe8; border-radius: 6px; }
-		button { width: 100%; margin-top: 16px; padding: 10px; border: 0; border-radius: 6px; background: #1457ba; color: #fff; font-weight: 700; cursor: pointer; }
-		.error { margin-bottom: 10px; padding: 8px 10px; background: #ffe9e9; color: #b30000; border-radius: 6px; font-size: 13px; }
-		.hint { margin-top: 10px; font-size: 12px; color: #666; text-align: center; }
-	</style>
-</head>
-<body>
-	<div class="wrap">
-		<h1>로그인 확인</h1>
-		${error ? `<div class="error">${escapeHtml(error)}</div>` : ''}
-		<form method="post" action="/login-page">
-			<input type="hidden" name="next" value="${escapeHtml(next)}" />
-			<label for="id">아이디</label>
-			<input id="id" name="id" type="text" autocomplete="username" />
-			<label for="pwd">비밀번호</label>
-			<input id="pwd" name="pwd" type="password" autocomplete="current-password" />
-			<button type="submit">로그인</button>
-		</form>
-		<div class="hint">DB 인증 후 홈으로 이동합니다.</div>
-	</div>
-</body>
-</html>`;
-
-app.get('/health', (req, res) => {
-	res.json({ ok: true, timestamp: new Date().toISOString() });
-});
-
-app.get('/login-page', (req, res) => {
-	const next = resolveNextUrl(req.query?.next);
-	const error = typeof req.query?.error === 'string' ? req.query.error : '';
-	res.setHeader('Content-Type', 'text/html; charset=utf-8');
-	res.send(buildLoginPageHtml({ error, next }));
-});
-
-app.post('/login-page', async (req, res) => {
-	const id = normalizeTextForDb(req.body?.id, '');
-	const pwd = normalizeTextForDb(req.body?.pwd, '');
-	const next = resolveNextUrl(req.body?.next);
-	if (!id || !pwd) {
-		const params = new URLSearchParams({ error: '아이디와 비밀번호를 입력해 주세요.', next });
-		return res.redirect(`/login-page?${params.toString()}`);
-	}
-
-	try {
-		const [rows] = await withDbConnection(async (connection) => connection.execute(
-			'SELECT id FROM member WHERE id = ? AND pwd = ? LIMIT 1',
-			[id, pwd]
-		));
-		if (!Array.isArray(rows) || rows.length === 0) {
-			const params = new URLSearchParams({ error: '아이디 또는 비밀번호가 일치하지 않습니다.', next });
-			return res.redirect(`/login-page?${params.toString()}`);
-		}
-
-		const loginId = encodeURIComponent(String(rows[0]?.id ?? id));
-		const separator = next.includes('?') ? '&' : '?';
-		return res.redirect(`${next}${separator}server_login_id=${loginId}`);
-	} catch (err) {
-		const params = new URLSearchParams({ error: '로그인 처리 중 오류가 발생했습니다.', next });
-		return res.redirect(`/login-page?${params.toString()}`);
-	}
-});
 
 const normalizeForDb = (value) => {
 	if (value === null || value === undefined) return null;
@@ -455,6 +355,105 @@ const withDbTransaction = async (work) => {
 	}
 };
 
+const AUTH_COOKIE_NAME = (process.env.AUTH_COOKIE_NAME || 'kolas_auth_token').trim();
+const AUTH_TOKEN_EXPIRES_IN = (process.env.AUTH_TOKEN_EXPIRES_IN || '1h').trim();
+const AUTH_COOKIE_MAX_AGE_MS = Number(process.env.AUTH_COOKIE_MAX_AGE_MS || 60 * 60 * 1000);
+const AUTH_BCRYPT_ROUNDS = Math.max(4, Number(process.env.AUTH_BCRYPT_ROUNDS || 12));
+const IS_PRODUCTION = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+const DEV_DEFAULT_JWT_SECRET = 'dev-only-change-this-jwt-secret';
+const JWT_SECRET = (
+	process.env.JWT_SECRET ||
+	(IS_PRODUCTION ? '' : DEV_DEFAULT_JWT_SECRET)
+).trim();
+const LOGIN_RATE_LIMIT_MAX = Math.max(1, Number(process.env.LOGIN_RATE_LIMIT_MAX || 10));
+
+if (!JWT_SECRET) {
+	console.warn('JWT_SECRET is not set. Login endpoints will fail until JWT_SECRET is configured.');
+}
+
+const loginRateLimiter = rateLimit({
+	windowMs: 15 * 60 * 1000,
+	max: LOGIN_RATE_LIMIT_MAX,
+	standardHeaders: true,
+	legacyHeaders: false,
+	message: { error: '로그인 시도 횟수를 초과했습니다. 잠시 후 다시 시도해주세요.' }
+});
+
+const ensureJwtSecret = (res) => {
+	if (JWT_SECRET) return true;
+	res.status(500).json({ error: '서버 JWT_SECRET 설정이 필요합니다.' });
+	return false;
+};
+
+const isBcryptHash = (value) => /^\$2[aby]\$\d{2}\$/.test(String(value || ''));
+
+const getMemberColumnSet = async (connection) => {
+	const [columnRows] = await connection.execute('SHOW COLUMNS FROM member');
+	return new Set(
+		(Array.isArray(columnRows) ? columnRows : [])
+			.map(row => String(row?.Field || '').trim())
+			.filter(Boolean)
+	);
+};
+
+const buildMemberSelectColumns = (columnSet) => {
+	const requiredColumns = ['id', 'pwd'];
+	const optionalColumns = ['email', 'admin_flag'];
+	for (const column of optionalColumns) {
+		if (columnSet.has(column)) requiredColumns.push(column);
+	}
+	return requiredColumns;
+};
+
+const sanitizeMemberForClient = (memberRow, columnSet) => ({
+	id: normalizeTextForDb(memberRow?.id, ''),
+	email: columnSet?.has('email') ? normalizeForDb(memberRow?.email) : null,
+	admin_flag: columnSet?.has('admin_flag')
+		? normalizeTextForDb(memberRow?.admin_flag, '0')
+		: '0'
+});
+
+const issueAuthToken = (member) => jwt.sign(
+	{
+		id: member.id,
+		email: member.email,
+		admin_flag: member.admin_flag
+	},
+	JWT_SECRET,
+	{ expiresIn: AUTH_TOKEN_EXPIRES_IN }
+);
+
+const setAuthCookie = (res, token) => {
+	res.cookie(AUTH_COOKIE_NAME, token, {
+		httpOnly: true,
+		secure: IS_PRODUCTION,
+		sameSite: 'lax',
+		maxAge: AUTH_COOKIE_MAX_AGE_MS,
+		path: '/'
+	});
+};
+
+const clearAuthCookie = (res) => {
+	res.clearCookie(AUTH_COOKIE_NAME, {
+		httpOnly: true,
+		secure: IS_PRODUCTION,
+		sameSite: 'lax',
+		path: '/'
+	});
+};
+
+const extractAuthTokenFromRequest = (req) => {
+	const cookieToken = req.cookies?.[AUTH_COOKIE_NAME];
+	if (cookieToken) return cookieToken;
+
+	const authHeader = normalizeForDb(req.headers?.authorization);
+	if (!authHeader) return null;
+
+	const [scheme, token] = authHeader.split(/\s+/, 2);
+	if (String(scheme || '').toLowerCase() !== 'bearer') return null;
+	return normalizeForDb(token);
+};
+
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_API_KEY = (
 	process.env.OPENAI_API_KEY ||
@@ -476,7 +475,7 @@ async function analyzeWithOpenAI(req, res) {
 
 		if (!OPENAI_API_KEY) {
 			return res.status(500).json({
-				error: 'OpenAI API key is missing. Set OPENAI_API_KEY (recommended) or VITE_OPENAI_API_KEY in server environment.'
+				error: 'OpenAI API call failed',
 			});
 		}
 
@@ -501,7 +500,7 @@ async function analyzeWithOpenAI(req, res) {
 		if (!openaiRes.ok) {
 			const errorBody = await openaiRes.text();
 			return res.status(openaiRes.status).json({
-				error: 'OpenAI API 호출 실패',
+				error: 'OpenAI API call failed',
 				status: openaiRes.status,
 				details: errorBody
 			});
@@ -578,7 +577,7 @@ app.get('/analysis-results-export', async (req, res) => {
 	}
 });
 
-// ===== 분석 결과 조회 =====
+// ===== Analysis Results By Member =====
 app.get('/analysis-results/:memberId', async (req, res) => {
 	try {
 		const [results] = await withDbConnection(async (connection) => connection.execute(
@@ -637,7 +636,7 @@ app.get('/analysis-results/:memberId', async (req, res) => {
 	}
 });
 
-// ===== 전체 분석 결과 조회 =====
+// ===== All Analysis Results =====
 app.get('/analysis-results', async (req, res) => {
 	try {
 		const [results] = await withDbConnection(async (connection) => connection.execute(
@@ -696,7 +695,7 @@ app.get('/analysis-results', async (req, res) => {
 	}
 });
 
-// ===== 분석 결과 저장 =====
+// ===== Insert Analysis Results =====
 app.post('/analysis-results/insert', async (req, res) => {
 	try {
 		const requestBody = req.body;
@@ -710,7 +709,7 @@ app.post('/analysis-results/insert', async (req, res) => {
 			: requestBody?.summaryInfo ?? null;
 
 		if (!Array.isArray(results) || results.length === 0) {
-			return res.status(400).json({ error: '저장할 데이터가 없습니다.' });
+			return res.status(400).json({ error: 'No data to save.' });
 		}
 		if (!summaryInfoInput || typeof summaryInfoInput !== 'object') {
 			return res.status(400).json({ error: 'analysis_info(summaryInfo)는 필수입니다.' });
@@ -786,7 +785,7 @@ app.post('/analysis-results/insert', async (req, res) => {
 				report_no: persistedReportNo
 			};
 			executedQueries.push({ sql: summarySql, values: summaryValues });
-			console.log('저장 완료 - analysis_info report_no:', persistedReportNo);
+			console.log('[DB] analysis_info insert completed - report_no:', persistedReportNo);
 			const [subColumnRows] = await connection.execute(
 				`SHOW COLUMNS FROM analysis_results LIKE 'item_attribute_sub'`
 			);
@@ -881,58 +880,119 @@ app.post('/analysis-results/insert', async (req, res) => {
 			executedQueries
 		});
 	} catch (err) {
-		console.error('INSERT 오류:', err.message);
+		console.error('[DB] INSERT error:', err.message);
 		res.status(500).json({ error: err.message });
 	}
 });
 
-// ===== 사용자 로그인 =====
-app.post('/login', async (req, res) => {
+// ===== 사용자 인증 =====
+const handleLogin = async (req, res) => {
+	if (!ensureJwtSecret(res)) return;
+
 	try {
-		const { id, pwd } = req.body;
-		console.log('[로그인 시도]:', { id });
+		const id = normalizeForDb(req.body?.id);
+		const pwd = normalizeForDb(req.body?.pwd);
 
-		const [result] = await withDbConnection(async (connection) => connection.execute(
-			'SELECT * FROM member WHERE id = ? AND pwd = ?',
-			[id, pwd]
-		));
-
-		if (result.length > 0) {
-			console.log('[로그인 성공]:', id);
-			res.json({ success: true, member: result[0] });
-		} else {
-			console.log('[로그인 실패: 사용자 없음] -', id);
-			res.status(401).json({ error: '아이디 또는 비밀번호가 일치하지 않습니다.' });
+		if (!id || !pwd) {
+			return res.status(400).json({ error: '아이디와 비밀번호를 입력해주세요.' });
 		}
-	} catch (err) {
-		console.error('[로그인 오류]:', err.message);
-		res.status(500).json({ error: err.message });
-	}
-});
 
-// ===== 사용자 회원가입 =====
-app.post('/register', async (req, res) => {
+		console.log('[AUTH] login attempt:', { id });
+
+		const loginResult = await withDbConnection(async (connection) => {
+			const columnSet = await getMemberColumnSet(connection);
+			const selectColumns = buildMemberSelectColumns(columnSet);
+			const [rows] = await connection.execute(
+				`SELECT ${selectColumns.map(column => `\`${column}\``).join(', ')} FROM member WHERE id = ? LIMIT 1`,
+				[id]
+			);
+
+			if (!Array.isArray(rows) || rows.length === 0) {
+				return { ok: false, reason: 'not_found' };
+			}
+
+			const memberRow = rows[0];
+			const storedPwd = String(memberRow?.pwd || '');
+			const matched = isBcryptHash(storedPwd)
+				? await bcrypt.compare(pwd, storedPwd)
+				: storedPwd === pwd;
+
+			if (!matched) {
+				return { ok: false, reason: 'wrong_password' };
+			}
+
+			// Legacy plain-text password accounts are upgraded to bcrypt hash on first successful login.
+			if (!isBcryptHash(storedPwd)) {
+				const hashedPwd = await bcrypt.hash(pwd, AUTH_BCRYPT_ROUNDS);
+				await connection.execute(
+					'UPDATE member SET pwd = ? WHERE id = ?',
+					[hashedPwd, id]
+				);
+				memberRow.pwd = hashedPwd;
+			}
+
+			const member = sanitizeMemberForClient(memberRow, columnSet);
+			return { ok: true, member };
+		});
+
+		if (!loginResult.ok) {
+			console.log('[AUTH] login failed:', id, loginResult.reason);
+			return res.status(401).json({ error: '아이디 또는 비밀번호가 올바르지 않습니다.' });
+		}
+
+		const token = issueAuthToken(loginResult.member);
+		setAuthCookie(res, token);
+
+		console.log('[AUTH] login success:', id);
+		return res.json({
+			success: true,
+			member: loginResult.member
+		});
+	} catch (err) {
+		console.error('[AUTH] login error:', err.message);
+		return res.status(500).json({ error: err.message });
+	}
+};
+
+const handleRegister = async (req, res) => {
 	try {
-		const { id, pwd, email } = req.body;
+		const id = normalizeForDb(req.body?.id);
+		const pwd = normalizeForDb(req.body?.pwd);
+		const email = normalizeForDb(req.body?.email);
+
 		if (!id || !pwd) {
 			return res.status(400).json({ error: '아이디와 비밀번호는 필수입니다.' });
 		}
 
 		const registerResult = await withDbConnection(async (connection) => {
-			// 중복 확인
-			const [existingUsers] = await connection.execute(
-				'SELECT * FROM member WHERE id = ?',
+			const columnSet = await getMemberColumnSet(connection);
+
+			const [existingRows] = await connection.execute(
+				'SELECT id FROM member WHERE id = ? LIMIT 1',
 				[id]
 			);
-
-			if (existingUsers.length > 0) {
+			if (Array.isArray(existingRows) && existingRows.length > 0) {
 				return { duplicated: true };
 			}
 
-			// 신규 사용자 생성
+			const hashedPwd = await bcrypt.hash(pwd, AUTH_BCRYPT_ROUNDS);
+			const columns = ['id', 'pwd'];
+			const values = [id, hashedPwd];
+			const placeholders = ['?', '?'];
+
+			if (columnSet.has('email')) {
+				columns.push('email');
+				values.push(email);
+				placeholders.push('?');
+			}
+			if (columnSet.has('created_at')) {
+				columns.push('created_at');
+				placeholders.push('NOW()');
+			}
+
 			await connection.execute(
-				'INSERT INTO member (id, pwd, email, created_at) VALUES (?, ?, ?, NOW())',
-				[id, pwd, email || null]
+				`INSERT INTO member (${columns.map(column => `\`${column}\``).join(', ')}) VALUES (${placeholders.join(', ')})`,
+				values
 			);
 
 			return { duplicated: false };
@@ -942,13 +1002,71 @@ app.post('/register', async (req, res) => {
 			return res.status(400).json({ error: '이미 존재하는 아이디입니다.' });
 		}
 
-		res.json({ success: true, message: '회원가입이 완료되었습니다.' });
+		return res.json({ success: true, message: '회원가입이 완료되었습니다.' });
 	} catch (err) {
-		res.status(500).json({ error: err.message });
+		return res.status(500).json({ error: err.message });
 	}
-});
+};
 
-// ===== 특정 분석 결과 삭제 =====
+const handleAuthMe = async (req, res) => {
+	if (!ensureJwtSecret(res)) return;
+
+	try {
+		const token = extractAuthTokenFromRequest(req);
+		if (!token) {
+			return res.status(401).json({ error: '인증 토큰이 없습니다.' });
+		}
+
+		let payload;
+		try {
+			payload = jwt.verify(token, JWT_SECRET);
+		} catch {
+			return res.status(401).json({ error: '유효하지 않은 인증 토큰입니다.' });
+		}
+
+		const tokenMemberId = normalizeForDb(payload?.id);
+		if (!tokenMemberId) {
+			return res.status(401).json({ error: '유효하지 않은 인증 토큰입니다.' });
+		}
+
+		const meResult = await withDbConnection(async (connection) => {
+			const columnSet = await getMemberColumnSet(connection);
+			const selectColumns = ['id'];
+			if (columnSet.has('email')) selectColumns.push('email');
+			if (columnSet.has('admin_flag')) selectColumns.push('admin_flag');
+
+			const [rows] = await connection.execute(
+				`SELECT ${selectColumns.map(column => `\`${column}\``).join(', ')} FROM member WHERE id = ? LIMIT 1`,
+				[tokenMemberId]
+			);
+
+			if (!Array.isArray(rows) || rows.length === 0) return null;
+			return sanitizeMemberForClient(rows[0], columnSet);
+		});
+
+		if (!meResult) {
+			return res.status(401).json({ error: '사용자 정보를 찾을 수 없습니다.' });
+		}
+
+		return res.json({ success: true, member: meResult });
+	} catch (err) {
+		return res.status(500).json({ error: err.message });
+	}
+};
+
+const handleAuthLogout = (req, res) => {
+	clearAuthCookie(res);
+	return res.json({ success: true, message: '로그아웃되었습니다.' });
+};
+
+app.post('/api/auth/login', loginRateLimiter, handleLogin);
+app.post('/login', loginRateLimiter, handleLogin);
+app.post('/api/auth/register', loginRateLimiter, handleRegister);
+app.post('/register', loginRateLimiter, handleRegister);
+app.get('/api/auth/me', handleAuthMe);
+app.post('/api/auth/logout', handleAuthLogout);
+
+// ===== Delete Single Analysis Result =====
 app.delete('/analysis-results/:id', async (req, res) => {
 	try {
 		const { id } = req.params;
@@ -993,7 +1111,7 @@ app.delete('/analysis-results/:id', async (req, res) => {
 	}
 });
 
-// ===== 여러 분석 결과 삭제 =====
+// ===== Delete Multiple Analysis Results =====
 app.post('/analysis-results/delete-multiple', async (req, res) => {
 	try {
 		const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
@@ -1063,7 +1181,7 @@ app.post('/analysis-results/delete-multiple', async (req, res) => {
 	}
 });
 
-// ===== 모든 분석 결과 삭제 =====
+// ===== Delete All Analysis Results =====
 app.delete('/analysis-results/all', async (req, res) => {
 	try {
 		await withDbTransaction(async (connection) => connection.execute('DELETE FROM analysis_results'));
@@ -1074,7 +1192,7 @@ app.delete('/analysis-results/all', async (req, res) => {
 });
 
 // =========================
-// AI Agent Script 종료
+// AI Agent Script End
 // =========================
 
 const PORT = process.env.PORT || 8080;
@@ -1082,3 +1200,4 @@ app.listen(PORT, () => {
 	console.log(`Server listening on port ${PORT}`);
 	console.log('Analyze endpoints: POST /gemini-analyze, POST /openai-analyze');
 });
+
