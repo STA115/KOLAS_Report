@@ -1,5 +1,5 @@
 ﻿// =========================
-// AI Agent Script ?쒖옉
+// AI Agent Script 시작
 // =========================
 import express from 'express';
 import cors from 'cors';
@@ -78,7 +78,7 @@ app.post('/gemini-analyze', async (req, res) => {
 		if (!openaiRes.ok) {
 			const errorBody = await openaiRes.text();
 			return res.status(openaiRes.status).json({
-				error: 'OpenAI API ?몄텧 ?ㅽ뙣',
+				error: 'OpenAI API 호출 실패',
 				status: openaiRes.status,
 				details: errorBody
 			});
@@ -155,7 +155,7 @@ app.get('/analysis-results-export', async (req, res) => {
 	}
 });
 
-// ===== 遺꾩꽍 寃곌낵 議고쉶 =====
+// ===== 분석 결과 조회 =====
 app.get('/analysis-results/:memberId', async (req, res) => {
 	try {
 		const [results] = await withDbConnection(async (connection) => connection.execute(
@@ -214,7 +214,7 @@ app.get('/analysis-results/:memberId', async (req, res) => {
 	}
 });
 
-// ===== ?꾩껜 遺꾩꽍 寃곌낵 議고쉶 =====
+// ===== 전체 분석 결과 조회 =====
 app.get('/analysis-results', async (req, res) => {
 	try {
 		const [results] = await withDbConnection(async (connection) => connection.execute(
@@ -273,7 +273,7 @@ app.get('/analysis-results', async (req, res) => {
 	}
 });
 
-// ===== 遺꾩꽍 寃곌낵 ?쇨큵 ???=====
+// ===== 분석 결과 저장 =====
 app.post('/analysis-results/insert', async (req, res) => {
 	try {
 		const requestBody = req.body;
@@ -287,7 +287,7 @@ app.post('/analysis-results/insert', async (req, res) => {
 			: requestBody?.summaryInfo ?? null;
 
 		if (!Array.isArray(results) || results.length === 0) {
-			return res.status(400).json({ error: '??ν븷 ?곗씠?곌? ?놁뒿?덈떎' });
+			return res.status(400).json({ error: '저장할 데이터가 없습니다.' });
 		}
 		if (!summaryInfoInput || typeof summaryInfoInput !== 'object') {
 			return res.status(400).json({ error: 'analysis_info(summaryInfo)는 필수입니다.' });
@@ -363,7 +363,7 @@ app.post('/analysis-results/insert', async (req, res) => {
 				report_no: persistedReportNo
 			};
 			executedQueries.push({ sql: summarySql, values: summaryValues });
-			console.log('??????꾨즺 - analysis_info report_no:', persistedReportNo);
+			console.log('저장 완료 - analysis_info report_no:', persistedReportNo);
 			const [subColumnRows] = await connection.execute(
 				`SHOW COLUMNS FROM analysis_results LIKE 'item_attribute_sub'`
 			);
@@ -458,16 +458,16 @@ app.post('/analysis-results/insert', async (req, res) => {
 			executedQueries
 		});
 	} catch (err) {
-		console.error('??INSERT ?ㅻ쪟:', err.message);
+		console.error('INSERT 오류:', err.message);
 		res.status(500).json({ error: err.message });
 	}
 });
 
-// ===== ?ъ슜??濡쒓렇??=====
+// ===== 사용자 로그인 =====
 app.post('/login', async (req, res) => {
 	try {
 		const { id, pwd } = req.body;
-		console.log('?뱦 濡쒓렇???쒕룄:', { id });
+		console.log('로그인 시도:', { id });
 
 		const [result] = await withDbConnection(async (connection) => connection.execute(
 			'SELECT * FROM member WHERE id = ? AND pwd = ?',
@@ -475,19 +475,19 @@ app.post('/login', async (req, res) => {
 		));
 
 		if (result.length > 0) {
-			console.log('??濡쒓렇???깃났:', id);
+			console.log('로그인 성공:', id);
 			res.json({ success: true, member: result[0] });
 		} else {
-			console.log('??濡쒓렇???ㅽ뙣: ?ъ슜???놁쓬 -', id);
-			res.status(401).json({ error: '?꾩씠???먮뒗 鍮꾨?踰덊샇媛 ??몄뒿?덈떎' });
+			console.log('로그인 실패: 사용자 없음 -', id);
+			res.status(401).json({ error: '아이디 또는 비밀번호가 일치하지 않습니다.' });
 		}
 	} catch (err) {
-		console.error('??濡쒓렇???ㅻ쪟:', err.message);
+		console.error('로그인 오류:', err.message);
 		res.status(500).json({ error: err.message });
 	}
 });
 
-// ===== ?ъ슜???뚯썝媛??=====
+// ===== 사용자 회원가입 =====
 app.post('/register', async (req, res) => {
 	try {
 		const { id, pwd, email } = req.body;
@@ -496,7 +496,7 @@ app.post('/register', async (req, res) => {
 		}
 
 		const registerResult = await withDbConnection(async (connection) => {
-			// 以묐났 ?뺤씤
+			// 중복 확인
 			const [existingUsers] = await connection.execute(
 				'SELECT * FROM member WHERE id = ?',
 				[id]
@@ -506,7 +506,7 @@ app.post('/register', async (req, res) => {
 				return { duplicated: true };
 			}
 
-			// ???ъ슜???앹꽦
+			// 신규 사용자 생성
 			await connection.execute(
 				'INSERT INTO member (id, pwd, email, created_at) VALUES (?, ?, ?, NOW())',
 				[id, pwd, email || null]
@@ -516,7 +516,7 @@ app.post('/register', async (req, res) => {
 		});
 
 		if (registerResult.duplicated) {
-			return res.status(400).json({ error: '?대? 議댁옱?섎뒗 ?꾩씠?붿엯?덈떎' });
+			return res.status(400).json({ error: '이미 존재하는 아이디입니다.' });
 		}
 
 		res.json({ success: true, message: '회원가입이 완료되었습니다.' });
@@ -525,7 +525,7 @@ app.post('/register', async (req, res) => {
 	}
 });
 
-// ===== ?뱀젙 遺꾩꽍 寃곌낵 ??젣 =====
+// ===== 특정 분석 결과 삭제 =====
 app.delete('/analysis-results/:id', async (req, res) => {
 	try {
 		const { id } = req.params;
@@ -570,7 +570,7 @@ app.delete('/analysis-results/:id', async (req, res) => {
 	}
 });
 
-// ===== ?щ윭 遺꾩꽍 寃곌낵 ??젣 =====
+// ===== 여러 분석 결과 삭제 =====
 app.post('/analysis-results/delete-multiple', async (req, res) => {
 	try {
 		const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
@@ -640,7 +640,7 @@ app.post('/analysis-results/delete-multiple', async (req, res) => {
 	}
 });
 
-// ===== 紐⑤뱺 遺꾩꽍 寃곌낵 ??젣 =====
+// ===== 모든 분석 결과 삭제 =====
 app.delete('/analysis-results/all', async (req, res) => {
 	try {
 		await withDbTransaction(async (connection) => connection.execute('DELETE FROM analysis_results'));
@@ -651,7 +651,7 @@ app.delete('/analysis-results/all', async (req, res) => {
 });
 
 // =========================
-// AI Agent Script ??
+// AI Agent Script 종료
 // =========================
 
 const PORT = process.env.PORT || 8080;
