@@ -880,6 +880,24 @@ export default function App() {
   });
 
   React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const serverLoginId = params.get('server_login_id');
+    if (!serverLoginId) return;
+
+    const expire = Date.now() + 60 * 60 * 1000;
+    localStorage.setItem('session_expire', expire.toString());
+    localStorage.setItem('login_id', serverLoginId);
+    setLoginId(serverLoginId);
+    setIsAdminMember(getStoredAdminFlag());
+    setIsLoggedIn(true);
+
+    params.delete('server_login_id');
+    const cleaned = params.toString();
+    const nextUrl = `${window.location.pathname}${cleaned ? `?${cleaned}` : ''}${window.location.hash}`;
+    window.history.replaceState({}, '', nextUrl);
+  }, []);
+
+  React.useEffect(() => {
     if (!isLoggedIn) return;
     const interval = setInterval(() => {
       const expire = localStorage.getItem('session_expire');

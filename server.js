@@ -1,4 +1,4 @@
-// =========================
+﻿// =========================
 // AI Agent Script 시작
 // =========================
 import express from 'express';
@@ -42,8 +42,132 @@ pool.getConnection()
 
 
 const app = express();
-app.use(cors());
+const defaultAllowedOrigins = [
+	'http://localhost:3000',
+	'http://localhost:5173',
+	'https://sta115.github.io'
+];
+const allowedOrigins = (process.env.CORS_ORIGINS || defaultAllowedOrigins.join(','))
+	.split(',')
+	.map(origin => origin.trim())
+	.filter(Boolean);
+
+app.use(cors({
+	origin: (origin, callback) => {
+		// Allow non-browser clients or same-origin requests with no Origin header.
+		if (!origin) {
+			callback(null, true);
+			return;
+		}
+		if (allowedOrigins.includes(origin)) {
+			callback(null, true);
+			return;
+		}
+		callback(new Error(`Not allowed by CORS: ${origin}`));
+	},
+	methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+	allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+const loginHomeUrl = process.env.LOGIN_HOME_URL || process.env.APP_URL || 'https://sta115.github.io/TRP/';
+
+const escapeHtml = (value) => String(value ?? '')
+	.replace(/&/g, '&amp;')
+	.replace(/</g, '&lt;')
+	.replace(/>/g, '&gt;')
+	.replace(/"/g, '&quot;')
+	.replace(/'/g, '&#39;');
+
+const resolveNextUrl = (rawNext) => {
+	const fallback = loginHomeUrl;
+	const value = String(rawNext ?? '').trim();
+	if (!value) return fallback;
+	if (value.startsWith('/')) return value;
+	try {
+		const parsed = new URL(value);
+		if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+			return parsed.toString();
+		}
+	} catch {
+		// noop
+	}
+	return fallback;
+};
+
+const buildLoginPageHtml = ({ error = '', next = '' } = {}) => `<!doctype html>
+<html lang="ko">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>로그인 확인</title>
+	<style>
+		body { font-family: Arial, sans-serif; background: #f4f7fb; margin: 0; }
+		.wrap { max-width: 380px; margin: 72px auto; background: #fff; border: 1px solid #d5e3f7; border-radius: 10px; padding: 24px; }
+		h1 { margin: 0 0 20px; font-size: 20px; color: #1457ba; text-align: center; }
+		label { display: block; margin: 12px 0 6px; font-size: 14px; color: #333; }
+		input { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #9dbbe8; border-radius: 6px; }
+		button { width: 100%; margin-top: 16px; padding: 10px; border: 0; border-radius: 6px; background: #1457ba; color: #fff; font-weight: 700; cursor: pointer; }
+		.error { margin-bottom: 10px; padding: 8px 10px; background: #ffe9e9; color: #b30000; border-radius: 6px; font-size: 13px; }
+		.hint { margin-top: 10px; font-size: 12px; color: #666; text-align: center; }
+	</style>
+</head>
+<body>
+	<div class="wrap">
+		<h1>로그인 확인</h1>
+		${error ? `<div class="error">${escapeHtml(error)}</div>` : ''}
+		<form method="post" action="/login-page">
+			<input type="hidden" name="next" value="${escapeHtml(next)}" />
+			<label for="id">아이디</label>
+			<input id="id" name="id" type="text" autocomplete="username" />
+			<label for="pwd">비밀번호</label>
+			<input id="pwd" name="pwd" type="password" autocomplete="current-password" />
+			<button type="submit">로그인</button>
+		</form>
+		<div class="hint">DB 인증 후 홈으로 이동합니다.</div>
+	</div>
+</body>
+</html>`;
+
+app.get('/health', (req, res) => {
+	res.json({ ok: true, timestamp: new Date().toISOString() });
+});
+
+app.get('/login-page', (req, res) => {
+	const next = resolveNextUrl(req.query?.next);
+	const error = typeof req.query?.error === 'string' ? req.query.error : '';
+	res.setHeader('Content-Type', 'text/html; charset=utf-8');
+	res.send(buildLoginPageHtml({ error, next }));
+});
+
+app.post('/login-page', async (req, res) => {
+	const id = normalizeTextForDb(req.body?.id, '');
+	const pwd = normalizeTextForDb(req.body?.pwd, '');
+	const next = resolveNextUrl(req.body?.next);
+	if (!id || !pwd) {
+		const params = new URLSearchParams({ error: '아이디와 비밀번호를 입력해 주세요.', next });
+		return res.redirect(`/login-page?${params.toString()}`);
+	}
+
+	try {
+		const [rows] = await withDbConnection(async (connection) => connection.execute(
+			'SELECT id FROM member WHERE id = ? AND pwd = ? LIMIT 1',
+			[id, pwd]
+		));
+		if (!Array.isArray(rows) || rows.length === 0) {
+			const params = new URLSearchParams({ error: '아이디 또는 비밀번호가 일치하지 않습니다.', next });
+			return res.redirect(`/login-page?${params.toString()}`);
+		}
+
+		const loginId = encodeURIComponent(String(rows[0]?.id ?? id));
+		const separator = next.includes('?') ? '&' : '?';
+		return res.redirect(`${next}${separator}server_login_id=${loginId}`);
+	} catch (err) {
+		const params = new URLSearchParams({ error: '로그인 처리 중 오류가 발생했습니다.', next });
+		return res.redirect(`/login-page?${params.toString()}`);
+	}
+});
 
 const normalizeForDb = (value) => {
 	if (value === null || value === undefined) return null;
