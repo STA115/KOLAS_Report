@@ -10,332 +10,41 @@ import mysql from 'mysql2/promise';
 dotenv.config({ path: '.env.local' });
 dotenv.config();
 
-// MySQL ?곌껐 ? ?앹꽦
-const pool = mysql.createPool({
-	host: process.env.DB_HOST || '127.0.0.1',
-	port: process.env.DB_PORT || 3306,
-	user: process.env.DB_USER || 'MySQL80_sta',
-	password: process.env.DB_PASSWORD || 'sta115!@#',
-	database: process.env.DB_NAME || 'sta_Kolas',
-	waitForConnections: true,
-	connectionLimit: 10,
-	queueLimit: 0
-});
-
-// MySQL ?곌껐 ?뚯뒪??
-pool.getConnection()
-	.then(connection => {
-		console.log('??MySQL ?곌껐 ?깃났');
-		connection.release();
-	})
-	.catch(err => {
-		console.error('??MySQL ?곌껐 ?ㅽ뙣:', err.message);
-	});
-
 
 const app = express();
-app.use(cors());
+const defaultAllowedOrigins = [
+	'http://localhost:3000',
+	'http://localhost:5173',
+	'https://sta115.github.io'
+];
+const allowedOrigins = (process.env.CORS_ORIGINS || defaultAllowedOrigins.join(','))
+	.split(',')
+	.map(origin => origin.trim())
+	.filter(Boolean);
+
+app.use(cors({
+	origin: (origin, callback) => {
+		// Allow non-browser clients or same-origin requests with no Origin header.
+		if (!origin) {
+			callback(null, true);
+			return;
+		}
+		if (allowedOrigins.includes(origin)) {
+			callback(null, true);
+			return;
+		}
+		callback(new Error(`Not allowed by CORS: ${origin}`));
+	},
+	methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+	allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json({ limit: '10mb' }));
 
-const normalizeForDb = (value) => {
-	if (value === null || value === undefined) return null;
-	const text = typeof value === 'string' ? value.trim() : String(value).trim();
-	return text === '' ? null : text;
-};
+// Google Gemini API 엔드포인트 및 키
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+const GEMINI_API_KEY = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || '';
 
-const normalizeTextForDb = (value, fallback = '') => {
-	const normalized = normalizeForDb(value);
-	return normalized === null ? fallback : normalized;
-};
-
-const normalizeDateForDb = (value) => {
-	const text = normalizeForDb(value);
-	if (text === null) return null;
-
-	let match = text.match(/(19\d{2}|20\d{2})\D{0,3}(\d{1,2})\D{0,3}(\d{1,2})/);
-	if (match) {
-		const year = Number(match[1]);
-		const month = Number(match[2]);
-		const day = Number(match[3]);
-		if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-			return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-		}
-	}
-
-	match = text.match(/\b(19\d{2}|20\d{2})(\d{2})(\d{2})\b/);
-	if (match) {
-		const year = Number(match[1]);
-		const month = Number(match[2]);
-		const day = Number(match[3]);
-		if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-			return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-		}
-	}
-
-	const parsed = new Date(text);
-	if (!Number.isNaN(parsed.getTime())) {
-		return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
-	}
-
-	return null;
-};
-
-const pickTextValueLoose = (row, keys) => {
-	const normalizeKey = key => String(key || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-	const normalizedTargets = new Set(keys.map(normalizeKey));
-
-	for (const key of keys) {
-		const normalized = normalizeForDb(row[key]);
-		if (normalized !== null) return normalized;
-	}
-
-	for (const [key, value] of Object.entries(row)) {
-		if (!normalizedTargets.has(normalizeKey(key))) continue;
-		const normalized = normalizeForDb(value);
-		if (normalized !== null) return normalized;
-	}
-
-	return null;
-};
-
-const OTHER_PLATFORM_WITH_DETAIL_PATTERN = /^(?:\uAE30\s*\uD0C0)(?:\s*[:\-]\s*|\s*\(\s*)([^)]+)\)?$/u;
-const OTHER_PLATFORM_ONLY_PATTERN = /^(?:\uAE30\s*\uD0C0)$/u;
-const OTHER_MAIN_TECH_WITH_DETAIL_PATTERN = /^(?:\uADF8\s*\uC678)(?:\s*[:\-]\s*|\s*\(\s*)([^)]+)\)?$/u;
-const OTHER_MAIN_TECH_ONLY_PATTERN = /^(?:\uADF8\s*\uC678)$/u;
-const OTHER_GENERIC_WITH_DETAIL_PATTERN = /^(?:\uAE30\s*\uD0C0)(?:\s*[:\-]\s*|\s*\(\s*)([^)]+)\)?$/u;
-const OTHER_GENERIC_ONLY_PATTERN = /^(?:\uAE30\s*\uD0C0)$/u;
-const PLATFORM_OTHER_LABEL = '\uAE30\uD0C0';
-const MAIN_TECH_OTHER_LABEL = '\uADF8\uC678';
-const GENERIC_OTHER_LABEL = '\uAE30\uD0C0';
-
-const normalizeOtherValueForDb = ({
-	rawValue,
-	rawEtc,
-	otherLabel,
-	otherWithDetailPattern,
-	otherOnlyPattern
-}) => {
-	const value = normalizeForDb(rawValue);
-	const etc = normalizeForDb(rawEtc);
-
-	if (value === null) {
-		if (etc !== null) {
-			return { value: otherLabel, ect: etc };
-		}
-		return { value: null, ect: null };
-	}
-
-	const withDetailMatch = value.match(otherWithDetailPattern);
-	if (withDetailMatch?.[1]?.trim()) {
-		return { value: otherLabel, ect: withDetailMatch[1].trim() };
-	}
-
-	if (otherOnlyPattern.test(value)) {
-		return { value: otherLabel, ect: etc };
-	}
-
-	return { value, ect: etc };
-};
-
-const normalizeMainTechFieldForDb = (row) => normalizeOtherValueForDb({
-	rawValue: row.mainTechField ?? row.item_mainTechField,
-	rawEtc: row.mainTechField_ect ?? row.mainTechFieldEtc ?? row.mainTechField_etc ?? row.item_mainTechField_ect,
-	otherLabel: MAIN_TECH_OTHER_LABEL,
-	otherWithDetailPattern: OTHER_MAIN_TECH_WITH_DETAIL_PATTERN,
-	otherOnlyPattern: OTHER_MAIN_TECH_ONLY_PATTERN
-});
-
-const normalizePlatformForDb = (row) => {
-	const rawPlatform = normalizeForDb(row.platform ?? row.item_platform);
-	const rawPlatformEtc = normalizeForDb(
-		row.platform_ect ?? row.platformEtc ?? row.platform_etc ?? row.item_platform_ect
-	);
-
-	if (rawPlatform) {
-		const openParenIndex = rawPlatform.indexOf('(');
-		if (openParenIndex >= 0) {
-			const platform = rawPlatform.slice(0, openParenIndex).trim() || null;
-			const platformEtc = rawPlatform
-				.slice(openParenIndex + 1)
-				.replace(/\)/g, '')
-				.trim() || rawPlatformEtc || null;
-
-			return {
-				platform,
-				platform_ect: platformEtc
-			};
-		}
-	}
-
-	const normalized = normalizeOtherValueForDb({
-		rawValue: rawPlatform,
-		rawEtc: rawPlatformEtc,
-		otherLabel: PLATFORM_OTHER_LABEL,
-		otherWithDetailPattern: OTHER_PLATFORM_WITH_DETAIL_PATTERN,
-		otherOnlyPattern: OTHER_PLATFORM_ONLY_PATTERN
-	});
-
-	return {
-		platform: normalized.value,
-		platform_ect: normalized.ect
-	};
-};
-
-const normalizeItemAttributeForDb = (row) => normalizeOtherValueForDb({
-	rawValue: pickTextValueLoose(row, [
-		'qualityCharacteristic',
-		'quality_characteristic',
-		'item_attribute',
-		'representativeDomain',
-		'대표도메인',
-		'대표 도메인',
-		'품질특성',
-		'품질 특성'
-	]),
-	rawEtc: pickTextValueLoose(row, [
-		'qualityCharacteristic_ect',
-		'qualityCharacteristicEtc',
-		'qualityCharacteristic_etc',
-		'item_attribute_ect'
-	]),
-	otherLabel: GENERIC_OTHER_LABEL,
-	otherWithDetailPattern: OTHER_GENERIC_WITH_DETAIL_PATTERN,
-	otherOnlyPattern: OTHER_GENERIC_ONLY_PATTERN
-});
-
-const normalizeMetricsForDb = (row, metricsValue) => normalizeOtherValueForDb({
-	rawValue: metricsValue,
-	rawEtc: pickTextValueLoose(row, ['Metrics_ect', 'metrics_ect', 'metric_ect', 'MetricsEtc', 'metricsEtc']),
-	otherLabel: GENERIC_OTHER_LABEL,
-	otherWithDetailPattern: OTHER_GENERIC_WITH_DETAIL_PATTERN,
-	otherOnlyPattern: OTHER_GENERIC_ONLY_PATTERN
-});
-
-const normalizeEqForDb = (row, eqValue) => normalizeOtherValueForDb({
-	rawValue: eqValue,
-	rawEtc: pickTextValueLoose(row, ['EQ_ect', 'eq_ect', 'equation_ect', 'EqEtc', 'eqEtc']),
-	otherLabel: GENERIC_OTHER_LABEL,
-	otherWithDetailPattern: OTHER_GENERIC_WITH_DETAIL_PATTERN,
-	otherOnlyPattern: OTHER_GENERIC_ONLY_PATTERN
-});
-
-const normalizeNullableIntegerForDb = (value) => {
-	const normalized = normalizeForDb(value);
-	if (normalized === null) return null;
-	const numberValue = Number(String(normalized).replace(/,/g, ''));
-	if (!Number.isFinite(numberValue)) return null;
-	return Math.trunc(numberValue);
-};
-
-const buildAnalysisInfoForDb = (summaryInfo) => {
-	if (!summaryInfo || typeof summaryInfo !== 'object') return null;
-
-	const reportNo = pickTextValueLoose(summaryInfo, ['report_no', 'Report_No', 'reportNo', 'report_no']);
-	const submissionId = pickTextValueLoose(summaryInfo, ['submission_id', 'submissionId', 'receiptNumber', 'receipt_number', '접수번호', '접수 번호']);
-	const gubunCode = pickTextValueLoose(summaryInfo, ['gubun_code', 'gubunCode', 'reportType', '시험성적서구분']);
-	const company_name = pickTextValueLoose(summaryInfo, ['company_name', '기관명', '회사명']);
-	const companyDomain = pickTextValueLoose(summaryInfo, ['company_domain', 'companyDomain', 'organizationDomain', 'representativeDomain', '기관도메인', '기관 도메인']);
-	const productName = pickTextValueLoose(summaryInfo, ['product_name', 'productName', '제품명']);
-	const requestDate = pickTextValueLoose(summaryInfo, ['request_Date', 'request_date', 'requestDate', 'applicationDate', '신청일자', '신청일']);
-	const testDate = pickTextValueLoose(summaryInfo, ['test_Date', 'test_date', 'testDate', 'executionDate', '수행일자', '시험일자', '시험일']);
-	const releaseDate = pickTextValueLoose(summaryInfo, ['release_Date', 'release_date', 'releaseDate', 'issuedAt', 'created_at', '발급일자', '발급 일자']);
-	const platformValue = pickTextValueLoose(summaryInfo, ['platform', '플랫폼']);
-	const platformEtc = pickTextValueLoose(summaryInfo, ['platform_ect', 'platformEtc', 'platform_other', '플랫폼_기타', '플랫폼 기타']);
-	const mainTechField = pickTextValueLoose(summaryInfo, ['mainTechField', 'main_tech_field', '주요기술분야', '주요기술 분야']);
-	const mainTechFieldEtc = pickTextValueLoose(summaryInfo, ['mainTechField_ect', 'mainTechFieldEtc', 'mainTechField_etc', '주요기술분야_기타', '주요기술 분야_기타']);
-	const overview = pickTextValueLoose(summaryInfo, ['overview', '개요']);
-	const testItemCount = pickTextValueLoose(summaryInfo, ['test_item_count', 'testItemCount', '시험항목수', '시험항목 수']);
-	const receivingOrg = pickTextValueLoose(summaryInfo, ['receiving_org', 'receivingOrg', 'participatingProjectName', '참여사업명']);
-	const programName = pickTextValueLoose(summaryInfo, ['program_name', 'programName', 'submissionOffice', '제출처']);
-	const operator = pickTextValueLoose(summaryInfo, ['operator', 'practitioner', '작성자', '실무자', '담당자']);
-
-	const normalizedPlatform = (() => {
-		const normalizedBase = normalizeForDb(platformValue);
-		const normalizedEtc = normalizeForDb(platformEtc);
-		// analysis_info는 플랫폼/플랫폼_기타를 platform 1개 컬럼으로 합쳐 저장
-		if (normalizedBase && normalizedEtc) return `${normalizedBase}(${normalizedEtc})`;
-		if (normalizedBase) return normalizedBase;
-		if (normalizedEtc) return `기타(${normalizedEtc})`;
-		return null;
-	})();
-
-	return {
-		report_no: normalizeForDb(reportNo),
-		submission_id: normalizeForDb(submissionId),
-		gubun_code: normalizeForDb(gubunCode),
-		company_name: normalizeForDb(company_name),
-		company_domain: normalizeForDb(companyDomain),
-		product_name: normalizeForDb(productName),
-		request_Date: normalizeDateForDb(requestDate),
-		test_Date: normalizeDateForDb(testDate),
-		release_Date: normalizeDateForDb(releaseDate),
-		platform: normalizedPlatform,
-		mainTechField: normalizeForDb(mainTechField),
-		mainTechField_ect: normalizeForDb(mainTechFieldEtc),
-		overview: normalizeForDb(overview),
-		test_item_count: normalizeNullableIntegerForDb(testItemCount),
-		receiving_org: normalizeForDb(receivingOrg),
-		program_name: normalizeForDb(programName),
-		operator: normalizeForDb(operator)
-	};
-};
-
-const isAiLikeRow = row => {
-	const probe = [
-		row.gubun_code,
-		row.Report_No,
-		row.AI_Domain,
-		row.AI_Tech,
-		row.mainTechField,
-		row.Test_Item
-	]
-		.map(value => String(value || '').toLowerCase())
-		.join(' ');
-
-	return /(ai|artificial intelligence|machine learning|deep learning|neural|llm|gpt|vision|nlp|stt|asr|tts|ocr)/.test(probe);
-};
-
-const withDbConnection = async (work) => {
-	const connection = await pool.getConnection();
-	try {
-		return await work(connection);
-	} finally {
-		connection.release();
-	}
-};
-
-const withDbTransaction = async (work) => {
-	const connection = await pool.getConnection();
-	try {
-		await connection.beginTransaction();
-		const result = await work(connection);
-		await connection.commit();
-		return result;
-	} catch (err) {
-		try {
-			await connection.rollback();
-		} catch (rollbackErr) {
-			console.error('DB rollback failed:', rollbackErr.message);
-		}
-		throw err;
-	} finally {
-		connection.release();
-	}
-};
-
-const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
-const OPENAI_API_KEY = (
-	process.env.OPENAI_API_KEY ||
-	process.env.VITE_OPENAI_API_KEY ||
-	// Backward compatibility: reuse existing key variable if user stored OpenAI key there.
-	process.env.VITE_GEMINI_API_KEY ||
-	''
-).trim();
-const OPENAI_MODEL = (process.env.OPENAI_MODEL || 'gpt-4.1-mini').trim();
-console.log('OPENAI_API_KEY:', OPENAI_API_KEY ? '(set)' : '(empty)');
-console.log('OPENAI_MODEL:', OPENAI_MODEL);
-
-async function analyzeWithOpenAI(req, res) {
+app.post('/gemini-analyze', async (req, res) => {
 	try {
 		const { prompt } = req.body;
 		if (!prompt) {
@@ -948,5 +657,5 @@ app.delete('/analysis-results/all', async (req, res) => {
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
 	console.log(`Server listening on port ${PORT}`);
-	console.log('Analyze endpoints: POST /gemini-analyze, POST /openai-analyze');
+	console.log('Gemini analyze endpoint: POST /gemini-analyze');
 });
