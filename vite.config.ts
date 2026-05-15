@@ -9,7 +9,7 @@ export default defineConfig(({mode}) => {
     plugins: [react(), tailwindcss()],
     base: '/KOLAS_REPORT/',
     define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.VITE_GEMINI_API_KEY),
+      'process.env.VITE_OPENAI_API_KEY': JSON.stringify(env.VITE_OPENAI_API_KEY),
     },
     resolve: {
       alias: {
@@ -20,6 +20,20 @@ export default defineConfig(({mode}) => {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
+      proxy: {
+        '/gemini-analyze': {
+          target: 'http://localhost:8080',
+          changeOrigin: true,
+        },
+        '/openai-analyze': {
+          target: 'http://localhost:8080',
+          changeOrigin: true,
+        },
+        '/openai-analyze-report': {
+          target: 'http://localhost:8080',
+          changeOrigin: true,
+        },
+      },
     },
   };
 });
