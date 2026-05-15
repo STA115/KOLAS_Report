@@ -43,8 +43,11 @@ app.use(express.json({ limit: '10mb' }));
 // Google Gemini API 엔드포인트 및 키
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 const GEMINI_API_KEY = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || '';
+const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.VITE_OPENAI_API_KEY || '';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 
-app.post('/gemini-analyze', async (req, res) => {
+const analyzeWithOpenAI = async (req, res) => {
 	try {
 		const { prompt } = req.body;
 		if (!prompt) {
@@ -91,7 +94,7 @@ app.post('/gemini-analyze', async (req, res) => {
 	} catch (err) {
 		res.status(500).json({ error: err.message });
 	}
-}
+};
 
 // Keep legacy route name for frontend compatibility.
 app.post('/gemini-analyze', analyzeWithOpenAI);

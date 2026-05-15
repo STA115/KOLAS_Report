@@ -4,13 +4,25 @@ interface LoginProps {
   onLogin: (id?: string) => void;
 }
 
+const API_BASE_URL = (((import.meta as any).env.VITE_API_BASE_URL || '') as string).replace(/\/$/, '');
+const LEGACY_BASE_PATH = '/KOLAS_REPORT';
 
-const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL;
-const supabaseKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
+const buildLoginUrls = () => {
+  const { protocol, hostname, origin } = window.location;
+  const urls = [
+    API_BASE_URL ? `${API_BASE_URL}/login` : '',
+    `${LEGACY_BASE_PATH}/login`,
+    '/login',
+    `${origin}/login`,
+    `${origin}${LEGACY_BASE_PATH}/login`,
+    `${protocol}//${hostname}:8080/login`
+  ].filter(Boolean);
+
+  return Array.from(new Set(urls));
+};
 
 const Login: React.FC<LoginProps> = ({ onLogin }) => {
-  const [p_id, setp_id] = useState('');
+  const [id, setId] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
@@ -18,36 +30,63 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!p_id || !password) {
+
+    if (!id || !password) {
       setError('아이디와 비밀번호를 입력해 주세요.');
       return;
     }
-      // 입력값과 쿼리문을 alert로 표시
-      const queryMsg = `입력한 아이디: ${p_id}\n입력한 비밀번호: ${password}\n쿼리: SELECT * FROM Member WHERE Id = '${p_id}'`;
-      setLoading(true);
-      setError('');
-      // 1. ID만 확인
-      const { data: idData, error: idError } = await supabase
-        .from('member')
-        .select('*')
-        .eq('Id', p_id)
-        .single();
-      let resultMsg = '';
-      if (idError || !idData) {
-        alert(idError+' / '+idData?.id);
-        setLoading(false);
-        setError('아이디를 확인해 주세요.');
-        resultMsg = '로그인 실패: 아이디가 존재하지 않습니다.';
-        alert(resultMsg);
-        return;
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const urls = buildLoginUrls();
+      let lastError: Error | null = null;
+
+      for (const url of urls) {
+        try {
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, pwd: password })
+          });
+
+          const text = await response.text();
+          let payload: any = {};
+
+          if (text) {
+            try {
+              payload = JSON.parse(text);
+            } catch {
+              payload = { rawText: text };
+            }
+          }
+
+          if (!response.ok) {
+            const message = payload?.error || payload?.message || payload?.rawText || `${response.status} ${response.statusText}`;
+            if (response.status === 404) {
+              lastError = new Error(`[404] ${message}`);
+              continue;
+            }
+            throw new Error(`[${response.status}] ${message}`);
+          }
+
+          if (payload?.success) {
+            onLogin(payload?.member?.id || id);
+            return;
+          }
+
+          throw new Error(payload?.error || payload?.message || '로그인에 실패했습니다.');
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error(String(err));
+        }
       }
-      // 2. ID는 맞고 비밀번호만 확인
-      if (idData.pwd !== password) {
-        setLoading(false);
-        setError('비밀번호를 확인해 주세요.');
-        resultMsg = '로그인 실패: 비밀번호가 일치하지 않습니다.';
-        return;
-      }
+
+      throw lastError || new Error('로그인 서버를 찾을 수 없습니다.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '알 수 없는 오류';
+      setError(`로그인 실패: ${message}`);
+    } finally {
       setLoading(false);
     }
   };
@@ -64,8 +103,8 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 <input
                   type="text"
                   placeholder="아이디"
-                  value={p_id}
-                  onChange={e => setp_id(e.target.value)}
+                  value={id}
+                  onChange={(event) => setId(event.target.value)}
                   style={{
                     width: '100%',
                     padding: 8,
@@ -87,7 +126,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                   type={showPassword ? 'text' : 'password'}
                   placeholder="비밀번호"
                   value={password}
-                  onChange={e => setPassword(e.target.value)}
+                  onChange={(event) => setPassword(event.target.value)}
                   style={{
                     width: '100%',
                     padding: 8,
@@ -102,7 +141,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 />
                 <button
                   type="button"
-                  onClick={() => setShowPassword(v => !v)}
+                  onClick={() => setShowPassword((value) => !value)}
                   style={{
                     position: 'absolute',
                     right: 12,
