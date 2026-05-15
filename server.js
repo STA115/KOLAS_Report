@@ -10,17 +10,30 @@ import mysql from 'mysql2/promise';
 dotenv.config({ path: '.env.local' });
 dotenv.config();
 
-// MySQL ?곌껐 ? ?앹꽦
-const pool = mysql.createPool({
+const toBoolean = (value, defaultValue = false) => {
+	if (value === undefined || value === null || value === '') return defaultValue;
+	return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+};
+
+const DB_CONFIG = {
 	host: process.env.DB_HOST || '127.0.0.1',
-	port: process.env.DB_PORT || 3306,
+	port: Number(process.env.DB_PORT || 3306),
 	user: process.env.DB_USER || 'MySQL80_sta',
-	password: process.env.DB_PASSWORD || 'sta115!@#',
+	password: process.env.DB_PASSWORD || '',
 	database: process.env.DB_NAME || 'sta_Kolas',
 	waitForConnections: true,
-	connectionLimit: 10,
+	connectionLimit: Number(process.env.DB_CONNECTION_LIMIT || 10),
 	queueLimit: 0
-});
+};
+
+if (toBoolean(process.env.DB_SSL, false)) {
+	DB_CONFIG.ssl = {
+		rejectUnauthorized: toBoolean(process.env.DB_SSL_REJECT_UNAUTHORIZED, true)
+	};
+}
+
+// MySQL ?곌껐 ? ?앹꽦
+const pool = mysql.createPool(DB_CONFIG);
 
 // MySQL ?곌껐 ?뚯뒪??
 pool.getConnection()
@@ -34,8 +47,37 @@ pool.getConnection()
 
 
 const app = express();
-app.use(cors());
+const defaultAllowedOrigins = [
+	'http://localhost:3000',
+	'http://localhost:5173',
+	'https://sta115.github.io'
+];
+const allowedOrigins = (process.env.CORS_ORIGINS || defaultAllowedOrigins.join(','))
+	.split(',')
+	.map(origin => origin.trim())
+	.filter(Boolean);
+
+app.use(cors({
+	origin: (origin, callback) => {
+		// Allow non-browser clients or same-origin requests with no Origin header.
+		if (!origin) {
+			callback(null, true);
+			return;
+		}
+		if (allowedOrigins.includes(origin)) {
+			callback(null, true);
+			return;
+		}
+		callback(new Error(`Not allowed by CORS: ${origin}`));
+	},
+	methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+	allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json({ limit: '10mb' }));
+
+app.get('/health', (_req, res) => {
+	res.json({ ok: true, service: 'trp-api' });
+});
 
 const normalizeForDb = (value) => {
 	if (value === null || value === undefined) return null;
@@ -948,5 +990,6 @@ app.delete('/analysis-results/all', async (req, res) => {
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
 	console.log(`Server listening on port ${PORT}`);
+	console.log(`Allowed CORS origins: ${allowedOrigins.join(', ')}`);
 	console.log('Analyze endpoints: POST /gemini-analyze, POST /openai-analyze');
 });

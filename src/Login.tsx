@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 
 interface LoginProps {
   onLogin: (id?: string) => void;
 }
+
+const LOGIN_REQUEST_TIMEOUT_MS = 10000;
 
 const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [p_id, setp_id] = useState('');
@@ -17,17 +19,31 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const APP_BASE_PATH = (((import.meta as any).env.BASE_URL || '/') as string).replace(/\/$/, '');
 
   const getLoginUrlCandidates = () => {
-    const { protocol, hostname, origin } = window.location;
+    const { protocol, hostname, origin, port } = window.location;
+    const isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1';
+    const isLikelyDevFrontend = port === '5173' || port === '4173' || port === '3000';
+    const canTryLocalBackend = isLocalHost || isLikelyDevFrontend || protocol === 'http:';
+
     const urls = [
       API_BASE_URL ? `${API_BASE_URL}/login` : '',
-      APP_BASE_PATH ? `${APP_BASE_PATH}/login` : '',
-      '/login',
+      canTryLocalBackend ? `${protocol}//${hostname}:8080/login` : '',
       `${origin}/login`,
       APP_BASE_PATH ? `${origin}${APP_BASE_PATH}/login` : '',
-      `${protocol}//${hostname}:8080/login`,
+      '/login',
+      APP_BASE_PATH ? `${APP_BASE_PATH}/login` : '',
     ].filter(Boolean);
 
     return Array.from(new Set(urls));
+  };
+
+  const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs = LOGIN_REQUEST_TIMEOUT_MS) => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -48,7 +64,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
       for (const loginUrl of loginUrls) {
         try {
-          const response = await fetch(loginUrl, {
+          const response = await fetchWithTimeout(loginUrl, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -80,19 +96,25 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
           loginSuccess = !!data?.success;
           if (!loginSuccess) {
-            const failMessage = data?.error || data?.message || data?.rawText || '濡쒓렇?몄뿉 ?ㅽ뙣?덉뒿?덈떎.';
+            const failMessage = data?.error || data?.message || data?.rawText || '로그인에 실패했습니다.';
             setError(failMessage);
-            alert(`濡쒓렇???ㅽ뙣: ${failMessage}`);
+            alert(`로그인 실패: ${failMessage}`);
             return;
           }
+
           break;
         } catch (err) {
-          lastError = err instanceof Error ? err : new Error(String(err));
+          const error = err instanceof Error ? err : new Error(String(err));
+          lastError = new Error(`${loginUrl} -> ${error.message}`);
         }
       }
 
       if (!loginSuccess) {
-        throw lastError || new Error('濡쒓렇???쒕쾭??李얠쓣 ???놁뒿?덈떎.');
+        const isGitHubPages = window.location.hostname.endsWith('github.io');
+        if (!API_BASE_URL && isGitHubPages) {
+          throw new Error('GitHub Pages는 정적 호스팅입니다. VITE_API_BASE_URL에 백엔드 서버 주소를 설정해 주세요.');
+        }
+        throw lastError || new Error('로그인 요청에 실패했습니다.');
       }
 
       if (data?.success) {
