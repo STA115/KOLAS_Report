@@ -1,24 +1,52 @@
 import React, { useState } from 'react';
+import { createClient } from '@supabase/supabase-js';
 
 interface LoginProps {
   onLogin: (id?: string) => void;
 }
 
-const API_BASE_URL = (((import.meta as any).env.VITE_API_BASE_URL || '') as string).replace(/\/$/, '');
-const LEGACY_BASE_PATH = '/KOLAS_REPORT';
+const supabaseUrl = ((import.meta as any).env.VITE_SUPABASE_URL || '') as string;
+const supabaseAnonKey = ((import.meta as any).env.VITE_SUPABASE_ANON_KEY || '') as string;
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-const buildLoginUrls = () => {
-  const { protocol, hostname, origin } = window.location;
-  const urls = [
-    API_BASE_URL ? `${API_BASE_URL}/login` : '',
-    `${LEGACY_BASE_PATH}/login`,
-    '/login',
-    `${origin}/login`,
-    `${origin}${LEGACY_BASE_PATH}/login`,
-    `${protocol}//${hostname}:8080/login`
-  ].filter(Boolean);
+type MemberRow = Record<string, unknown>;
 
-  return Array.from(new Set(urls));
+const findMemberById = async (loginId: string): Promise<{ row: MemberRow; idColumn: string; pwdColumn: string } | null> => {
+  const candidates = [
+    { idColumn: 'id', pwdColumn: 'pwd' },
+    { idColumn: 'Id', pwdColumn: 'pwd' },
+    { idColumn: 'id', pwdColumn: 'Pwd' },
+    { idColumn: 'Id', pwdColumn: 'Pwd' }
+  ];
+
+  let lastError: Error | null = null;
+
+  for (const candidate of candidates) {
+    const { idColumn, pwdColumn } = candidate;
+    const selectColumns = `${idColumn},${pwdColumn}`;
+    const { data, error } = await supabase
+      .from('member')
+      .select(selectColumns)
+      .eq(idColumn, loginId)
+      .limit(1);
+
+    if (error) {
+      lastError = error;
+      continue;
+    }
+
+    if (!Array.isArray(data) || data.length === 0) {
+      return null;
+    }
+
+    return { row: data[0] as unknown as MemberRow, idColumn, pwdColumn };
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+
+  return null;
 };
 
 const Login: React.FC<LoginProps> = ({ onLogin }) => {
@@ -36,56 +64,33 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
       return;
     }
 
+    if (!supabaseUrl || !supabaseAnonKey) {
+      setError('Supabase 환경변수(VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY)를 확인해 주세요.');
+      return;
+    }
+
     setLoading(true);
     setError('');
 
     try {
-      const urls = buildLoginUrls();
-      let lastError: Error | null = null;
+      const member = await findMemberById(id);
 
-      for (const url of urls) {
-        try {
-          const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id, pwd: password })
-          });
-
-          const text = await response.text();
-          let payload: any = {};
-
-          if (text) {
-            try {
-              payload = JSON.parse(text);
-            } catch {
-              payload = { rawText: text };
-            }
-          }
-
-          if (!response.ok) {
-            const message = payload?.error || payload?.message || payload?.rawText || `${response.status} ${response.statusText}`;
-            if (response.status === 404) {
-              lastError = new Error(`[404] ${message}`);
-              continue;
-            }
-            throw new Error(`[${response.status}] ${message}`);
-          }
-
-          if (payload?.success) {
-            onLogin(payload?.member?.id || id);
-            return;
-          }
-
-          throw new Error(payload?.error || payload?.message || '로그인에 실패했습니다.');
-        } catch (err) {
-          lastError = err instanceof Error ? err : new Error(String(err));
-        }
+      if (!member) {
+        setError('아이디 또는 비밀번호가 일치하지 않습니다.');
+        return;
       }
 
-      throw lastError || new Error('로그인 서버를 찾을 수 없습니다.');
+      const savedPassword = String(member.row[member.pwdColumn] ?? '');
+      if (savedPassword !== password) {
+        setError('아이디 또는 비밀번호가 일치하지 않습니다.');
+        return;
+      }
+
+      const memberId = String(member.row[member.idColumn] ?? id);
+      onLogin(memberId);
     } catch (err) {
       const message = err instanceof Error ? err.message : '알 수 없는 오류';
-      setError(`로그인 실패: ${message}`);
+      setError(`로그인 중 오류가 발생했습니다: ${message}`);
     } finally {
       setLoading(false);
     }
