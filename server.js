@@ -39,6 +39,194 @@ app.use(cors({
 	allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+const parseBooleanEnv = (value, fallback = false) => {
+	if (value === undefined || value === null || value === '') return fallback;
+	return ['1', 'true', 'yes', 'y', 'on'].includes(String(value).trim().toLowerCase());
+};
+
+const dbPort = Number(process.env.DB_PORT || 3306);
+const useDbSsl = parseBooleanEnv(process.env.DB_SSL, false);
+const dbSslRejectUnauthorized = parseBooleanEnv(process.env.DB_SSL_REJECT_UNAUTHORIZED, true);
+const dbPool = mysql.createPool({
+	host: process.env.DB_HOST || '127.0.0.1',
+	port: Number.isFinite(dbPort) ? dbPort : 3306,
+	user: process.env.DB_USER || '',
+	password: process.env.DB_PASSWORD || '',
+	database: process.env.DB_NAME || '',
+	waitForConnections: true,
+	connectionLimit: 10,
+	queueLimit: 0,
+	...(useDbSsl ? { ssl: { rejectUnauthorized: dbSslRejectUnauthorized } } : {})
+});
+
+const withDbConnection = async (task) => {
+	const connection = await dbPool.getConnection();
+	try {
+		return await task(connection);
+	} finally {
+		connection.release();
+	}
+};
+
+const withDbTransaction = async (task) => {
+	const connection = await dbPool.getConnection();
+	try {
+		await connection.beginTransaction();
+		const result = await task(connection);
+		await connection.commit();
+		return result;
+	} catch (err) {
+		try {
+			await connection.rollback();
+		} catch {
+			// noop
+		}
+		throw err;
+	} finally {
+		connection.release();
+	}
+};
+
+const normalizeForDb = (value) => {
+	if (value === null || value === undefined) return null;
+	const text = String(value).trim();
+	if (!text || /^(null|undefined)$/i.test(text)) return null;
+	return text;
+};
+
+const normalizeTextForDb = (value, fallback = '') => {
+	const normalized = normalizeForDb(value);
+	return normalized ?? fallback;
+};
+
+const toNullableNumber = (value) => {
+	if (value === null || value === undefined || value === '') return null;
+	const parsed = Number(value);
+	return Number.isFinite(parsed) ? parsed : null;
+};
+
+const buildAnalysisInfoForDb = (input) => {
+	if (!input || typeof input !== 'object') return null;
+	return {
+		report_no: normalizeForDb(input.report_no ?? input.Report_No),
+		submission_id: normalizeForDb(input.submission_id ?? input.receiptNumber),
+		gubun_code: normalizeForDb(input.gubun_code),
+		company_name: normalizeForDb(input.company_name ?? input.companyName),
+		company_domain: normalizeForDb(input.company_domain),
+		product_name: normalizeForDb(input.product_name ?? input.productName),
+		request_Date: normalizeForDb(input.request_Date),
+		test_Date: normalizeForDb(input.test_Date),
+		release_Date: normalizeForDb(input.release_Date ?? input.created_at),
+		platform: normalizeForDb(input.platform ?? input.productPlatform),
+		mainTechField: normalizeForDb(input.mainTechField),
+		mainTechField_ect: normalizeForDb(input.mainTechField_ect),
+		overview: normalizeForDb(input.overview),
+		test_item_count: toNullableNumber(input.test_item_count),
+		receiving_org: normalizeForDb(input.receiving_org),
+		program_name: normalizeForDb(input.program_name),
+		operator: normalizeForDb(input.operator)
+	};
+};
+
+const loginHomeUrl = process.env.LOGIN_HOME_URL || process.env.APP_URL || 'https://sta115.github.io/TRP/';
+
+const escapeHtml = (value) => String(value ?? '')
+	.replace(/&/g, '&amp;')
+	.replace(/</g, '&lt;')
+	.replace(/>/g, '&gt;')
+	.replace(/"/g, '&quot;')
+	.replace(/'/g, '&#39;');
+
+const resolveNextUrl = (rawNext) => {
+	const fallback = loginHomeUrl;
+	const value = String(rawNext ?? '').trim();
+	if (!value) return fallback;
+	if (value.startsWith('/')) return value;
+	try {
+		const parsed = new URL(value);
+		if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+			return parsed.toString();
+		}
+	} catch {
+		// noop
+	}
+	return fallback;
+};
+
+const buildLoginPageHtml = ({ error = '', next = '' } = {}) => `<!doctype html>
+<html lang="ko">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>로그인 확인</title>
+	<style>
+		body { font-family: Arial, sans-serif; background: #f4f7fb; margin: 0; }
+		.wrap { max-width: 380px; margin: 72px auto; background: #fff; border: 1px solid #d5e3f7; border-radius: 10px; padding: 24px; }
+		h1 { margin: 0 0 20px; font-size: 20px; color: #1457ba; text-align: center; }
+		label { display: block; margin: 12px 0 6px; font-size: 14px; color: #333; }
+		input { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #9dbbe8; border-radius: 6px; }
+		button { width: 100%; margin-top: 16px; padding: 10px; border: 0; border-radius: 6px; background: #1457ba; color: #fff; font-weight: 700; cursor: pointer; }
+		.error { margin-bottom: 10px; padding: 8px 10px; background: #ffe9e9; color: #b30000; border-radius: 6px; font-size: 13px; }
+		.hint { margin-top: 10px; font-size: 12px; color: #666; text-align: center; }
+	</style>
+</head>
+<body>
+	<div class="wrap">
+		<h1>로그인 확인</h1>
+		${error ? `<div class="error">${escapeHtml(error)}</div>` : ''}
+		<form method="post" action="/login-page">
+			<input type="hidden" name="next" value="${escapeHtml(next)}" />
+			<label for="id">아이디</label>
+			<input id="id" name="id" type="text" autocomplete="username" />
+			<label for="pwd">비밀번호</label>
+			<input id="pwd" name="pwd" type="password" autocomplete="current-password" />
+			<button type="submit">로그인</button>
+		</form>
+		<div class="hint">DB 인증 후 홈으로 이동합니다.</div>
+	</div>
+</body>
+</html>`;
+
+app.get('/health', (req, res) => {
+	res.json({ ok: true, timestamp: new Date().toISOString() });
+});
+
+app.get('/login-page', (req, res) => {
+	const next = resolveNextUrl(req.query?.next);
+	const error = typeof req.query?.error === 'string' ? req.query.error : '';
+	res.setHeader('Content-Type', 'text/html; charset=utf-8');
+	res.send(buildLoginPageHtml({ error, next }));
+});
+
+app.post('/login-page', async (req, res) => {
+	const id = normalizeTextForDb(req.body?.id, '');
+	const pwd = normalizeTextForDb(req.body?.pwd, '');
+	const next = resolveNextUrl(req.body?.next);
+	if (!id || !pwd) {
+		const params = new URLSearchParams({ error: '아이디와 비밀번호를 입력해 주세요.', next });
+		return res.redirect(`/login-page?${params.toString()}`);
+	}
+
+	try {
+		const [rows] = await withDbConnection(async (connection) => connection.execute(
+			'SELECT id FROM member WHERE id = ? AND pwd = ? LIMIT 1',
+			[id, pwd]
+		));
+		if (!Array.isArray(rows) || rows.length === 0) {
+			const params = new URLSearchParams({ error: '아이디 또는 비밀번호가 일치하지 않습니다.', next });
+			return res.redirect(`/login-page?${params.toString()}`);
+		}
+
+		const loginId = encodeURIComponent(String(rows[0]?.id ?? id));
+		const separator = next.includes('?') ? '&' : '?';
+		return res.redirect(`${next}${separator}server_login_id=${loginId}`);
+	} catch (err) {
+		const params = new URLSearchParams({ error: '로그인 처리 중 오류가 발생했습니다.', next });
+		return res.redirect(`/login-page?${params.toString()}`);
+	}
+});
 
 // Google Gemini API 엔드포인트 및 키
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';

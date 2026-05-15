@@ -1,52 +1,25 @@
 import React, { useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
 
 interface LoginProps {
   onLogin: (id?: string) => void;
 }
 
-const supabaseUrl = ((import.meta as any).env.VITE_SUPABASE_URL || '') as string;
-const supabaseAnonKey = ((import.meta as any).env.VITE_SUPABASE_ANON_KEY || '') as string;
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const API_BASE_URL = (import.meta as any).env.DEV
+  ? ''
+  : (((import.meta as any).env.VITE_API_BASE_URL || '') as string).replace(/\/$/, '');
 
-type MemberRow = Record<string, unknown>;
+const getApiBaseUrl = () => {
+  if (API_BASE_URL) return API_BASE_URL;
 
-const findMemberById = async (loginId: string): Promise<{ row: MemberRow; idColumn: string; pwdColumn: string } | null> => {
-  const candidates = [
-    { idColumn: 'id', pwdColumn: 'pwd' },
-    { idColumn: 'Id', pwdColumn: 'pwd' },
-    { idColumn: 'id', pwdColumn: 'Pwd' },
-    { idColumn: 'Id', pwdColumn: 'Pwd' }
-  ];
+  const { protocol, hostname, port } = window.location;
+  const isLocalFrontend = hostname === 'localhost' || hostname === '127.0.0.1';
+  const isLikelyDevFrontend = port === '5173' || port === '4173' || port === '3000';
 
-  let lastError: Error | null = null;
-
-  for (const candidate of candidates) {
-    const { idColumn, pwdColumn } = candidate;
-    const selectColumns = `${idColumn},${pwdColumn}`;
-    const { data, error } = await supabase
-      .from('member')
-      .select(selectColumns)
-      .eq(idColumn, loginId)
-      .limit(1);
-
-    if (error) {
-      lastError = error;
-      continue;
-    }
-
-    if (!Array.isArray(data) || data.length === 0) {
-      return null;
-    }
-
-    return { row: data[0] as unknown as MemberRow, idColumn, pwdColumn };
+  if (isLocalFrontend || isLikelyDevFrontend || protocol === 'http:') {
+    return `${protocol}//${hostname}:8080`;
   }
 
-  if (lastError) {
-    throw lastError;
-  }
-
-  return null;
+  return '';
 };
 
 const Login: React.FC<LoginProps> = ({ onLogin }) => {
@@ -56,6 +29,16 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const moveToServerLoginPage = () => {
+    const apiBaseUrl = getApiBaseUrl();
+    if (!apiBaseUrl) {
+      setError('백엔드 URL이 설정되지 않았습니다. VITE_API_BASE_URL을 설정해 주세요.');
+      return;
+    }
+    const next = encodeURIComponent(window.location.href);
+    window.location.href = `${apiBaseUrl}/login-page?next=${next}`;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -64,8 +47,9 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
       return;
     }
 
-    if (!supabaseUrl || !supabaseAnonKey) {
-      setError('Supabase 환경변수(VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY)를 확인해 주세요.');
+    const apiBaseUrl = getApiBaseUrl();
+    if (!apiBaseUrl) {
+      setError('백엔드 URL이 설정되지 않았습니다. VITE_API_BASE_URL을 설정해 주세요.');
       return;
     }
 
@@ -73,24 +57,36 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setError('');
 
     try {
-      const member = await findMemberById(id);
+      const response = await fetch(`${apiBaseUrl}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, pwd: password })
+      });
 
-      if (!member) {
-        setError('아이디 또는 비밀번호가 일치하지 않습니다.');
-        return;
+      const text = await response.text();
+      let payload: any = {};
+
+      if (text) {
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          payload = { rawText: text };
+        }
       }
 
-      const savedPassword = String(member.row[member.pwdColumn] ?? '');
-      if (savedPassword !== password) {
-        setError('아이디 또는 비밀번호가 일치하지 않습니다.');
-        return;
+      if (!response.ok) {
+        const message = payload?.error || payload?.message || payload?.rawText || `${response.status} ${response.statusText}`;
+        throw new Error(message);
       }
 
-      const memberId = String(member.row[member.idColumn] ?? id);
-      onLogin(memberId);
+      if (!payload?.success) {
+        throw new Error(payload?.error || payload?.message || '로그인에 실패했습니다.');
+      }
+
+      onLogin(payload?.member?.id || id);
     } catch (err) {
       const message = err instanceof Error ? err.message : '알 수 없는 오류';
-      setError(`로그인 중 오류가 발생했습니다: ${message}`);
+      setError(`로그인 실패: ${message}`);
     } finally {
       setLoading(false);
     }
@@ -185,6 +181,24 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           disabled={loading}
         >
           {loading ? '확인 중...' : '로그인'}
+        </button>
+        <button
+          type="button"
+          onClick={moveToServerLoginPage}
+          style={{
+            padding: 10,
+            width: '100%',
+            marginTop: 8,
+            backgroundColor: 'white',
+            color: '#1976d2',
+            border: '1px solid #1976d2',
+            borderRadius: 6,
+            fontSize: 14,
+            cursor: 'pointer',
+            fontWeight: 'bold'
+          }}
+        >
+          서버 로그인 페이지로 이동
         </button>
         {error && <div style={{ color: 'red', marginTop: 10 }}>{error}</div>}
       </form>
