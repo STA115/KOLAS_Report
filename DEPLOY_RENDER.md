@@ -1,7 +1,7 @@
 # Deploy Backend (Render) + MySQL + GitHub Pages Frontend
 
 This project uses:
-- Frontend: GitHub Pages (`https://sta115.github.io/TRP/`)
+- Frontend: GitHub Pages (`https://sta115.github.io/KOLAS_Report/`)
 - Backend API: Node/Express (`server.js`)
 - Database: MySQL
 
@@ -55,9 +55,9 @@ npm run deploy
 
 ## 4. GitHub Pages settings check
 
-- Repository: `sta115/TRP`
+- Repository: `sta115/KOLAS_Report`
 - Pages source should serve the built `dist` output (via `gh-pages` branch if you use `npm run deploy`).
-- Vite `base` is set to `/TRP/`.
+- Vite `base` is set to `/KOLAS_Report/`.
 
 ## 5. Quick troubleshooting
 

@@ -87,9 +87,9 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
           loginSuccess = !!data?.success;
           if (!loginSuccess) {
-            const failMessage = data?.error || data?.message || data?.rawText || '濡쒓렇?몄뿉 ?ㅽ뙣?덉뒿?덈떎.';
+            const failMessage = data?.error || data?.message || data?.rawText || '로그인 정보가 올바르지 않습니다.';
             setError(failMessage);
-            alert(`濡쒓렇???ㅽ뙣: ${failMessage}`);
+            alert(`로그인 실패: ${failMessage}`);
             return;
           }
           break;
@@ -99,7 +99,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
       }
 
       if (!loginSuccess) {
-        throw lastError || new Error('濡쒓렇???쒕쾭??李얠쓣 ???놁뒿?덈떎.');
+        throw lastError || new Error('로그인 서버를 찾을 수 없습니다.');
       }
 
       if (data?.success) {
@@ -149,7 +149,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     fontSize: 16,
                     outline: 'none',
                     marginTop: 2,
-                    marginBottom: 2
+                    marginBottom: 2,
                   }}
                 />
               </td>
@@ -171,7 +171,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     fontSize: 16,
                     outline: 'none',
                     marginTop: 2,
-                    marginBottom: 2
+                    marginBottom: 2,
                   }}
                 />
                 <button
@@ -185,12 +185,12 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     background: 'none',
                     border: 'none',
                     cursor: 'pointer',
-                    padding: 0
+                    padding: 0,
                   }}
                   tabIndex={-1}
                   aria-label={showPassword ? '비밀번호 숨기기' : '비밀번호 보기'}
                 >
-                  {showPassword ? '숨김' : '보기'}
+                  {showPassword ? '숨기기' : '보기'}
                 </button>
               </td>
             </tr>
@@ -210,11 +210,11 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
             cursor: loading ? 'not-allowed' : 'pointer',
             fontWeight: 'bold',
             boxShadow: '0 2px 4px rgba(25, 118, 210, 0.08)',
-            opacity: loading ? 0.7 : 1
+            opacity: loading ? 0.7 : 1,
           }}
           disabled={loading}
         >
-          {loading ? '확인 중...' : '로그인'}
+          {loading ? '로그인 중...' : '로그인'}
         </button>
         {error && <div style={{ color: 'red', marginTop: 10 }}>{error}</div>}
       </form>
