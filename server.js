@@ -11,9 +11,30 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 // Load local overrides first, then fallback to .env.
 dotenv.config({ path: '.env.local' });
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const normalizeBasePath = (value, fallback = '/') => {
+	const text = String(value || '').trim();
+	if (!text) return fallback;
+	if (text === '/') return '/';
+	return `/${text.replace(/^\/+|\/+$/g, '')}`;
+};
+
+const distDir = path.resolve(__dirname, 'dist');
+const serveFrontendSetting = String(process.env.SERVE_FRONTEND || '').trim().toLowerCase();
+const shouldServeFrontend = serveFrontendSetting
+	? ['1', 'true', 'yes', 'on'].includes(serveFrontendSetting)
+	: process.env.NODE_ENV === 'production';
+const frontendBasePath = normalizeBasePath(process.env.FRONTEND_BASE_PATH || '/');
+const hasBuiltFrontend = fs.existsSync(path.join(distDir, 'index.html'));
 
 const getRequiredEnv = (name) => {
 	const value = String(process.env[name] || '').trim();
@@ -68,6 +89,14 @@ app.use(cors({
 }));
 app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
+
+app.get('/health', (_req, res) => {
+	res.json({
+		ok: true,
+		service: 'kolas-api',
+		now: new Date().toISOString()
+	});
+});
 
 const normalizeForDb = (value) => {
 	if (value === null || value === undefined) return null;
@@ -1190,6 +1219,28 @@ app.delete('/analysis-results/all', async (req, res) => {
 		res.status(500).json({ error: err.message });
 	}
 });
+
+if (shouldServeFrontend) {
+	if (!hasBuiltFrontend) {
+		console.warn(`[WEB] Frontend build not found: ${distDir}`);
+	} else {
+		if (frontendBasePath === '/') {
+			app.use(express.static(distDir));
+			app.get('*', (_req, res) => {
+				res.sendFile(path.join(distDir, 'index.html'));
+			});
+		} else {
+			app.use(frontendBasePath, express.static(distDir));
+			app.get(frontendBasePath, (_req, res) => {
+				res.sendFile(path.join(distDir, 'index.html'));
+			});
+			app.get(`${frontendBasePath}/*`, (_req, res) => {
+				res.sendFile(path.join(distDir, 'index.html'));
+			});
+		}
+		console.log(`[WEB] Serving frontend from ${distDir} at ${frontendBasePath}`);
+	}
+}
 
 // =========================
 // AI Agent Script End

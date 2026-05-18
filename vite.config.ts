@@ -5,9 +5,13 @@ import {defineConfig, loadEnv} from 'vite';
 
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
+  const rawBasePath = String(env.VITE_BASE_PATH || '/KOLAS_Report/').trim();
+  const basePath = rawBasePath === '/'
+    ? '/'
+    : `/${rawBasePath.replace(/^\/+|\/+$/g, '')}/`;
   return {
     plugins: [react(), tailwindcss()],
-    base: '/KOLAS_Report/',
+    base: basePath,
     define: {
       'process.env.VITE_OPENAI_API_KEY': JSON.stringify(env.VITE_OPENAI_API_KEY),
     },
