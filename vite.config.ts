@@ -7,7 +7,7 @@ export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   return {
     plugins: [react(), tailwindcss()],
-    base: '/TRP/',
+    base: '/KOLAS_REPORT/',
     define: {
       'process.env.VITE_OPENAI_API_KEY': JSON.stringify(env.VITE_OPENAI_API_KEY),
     },
