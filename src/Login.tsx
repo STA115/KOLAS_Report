@@ -11,35 +11,102 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const API_BASE_URL = (import.meta as any).env.DEV
+  const env = ((import.meta as any).env || {}) as Record<string, unknown>;
+  const API_BASE_URL = env.DEV
     ? ''
-    : (((import.meta as any).env.VITE_API_BASE_URL || '') as string).replace(/\/$/, '');
-  const APP_BASE_PATH = (((import.meta as any).env.BASE_URL || '/') as string).replace(/\/$/, '');
+    : String(env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+
+  const saveSession = (member: { id?: string; email?: string; admin_flag?: string }) => {
+    const expire = Date.now() + 60 * 60 * 1000;
+    localStorage.setItem('session_expire', expire.toString());
+    localStorage.setItem('member', JSON.stringify(member));
+    if (member?.id) {
+      localStorage.setItem('login_id', member.id);
+    }
+  };
 
   const getLoginUrlCandidates = () => {
-    const { protocol, hostname, origin } = window.location;
     const urls = [
       API_BASE_URL ? `${API_BASE_URL}/api/auth/login` : '',
       API_BASE_URL ? `${API_BASE_URL}/login` : '',
-      APP_BASE_PATH ? `${APP_BASE_PATH}/api/auth/login` : '',
-      APP_BASE_PATH ? `${APP_BASE_PATH}/login` : '',
       '/api/auth/login',
       '/login',
-      `${origin}/api/auth/login`,
-      `${origin}/login`,
-      APP_BASE_PATH ? `${origin}${APP_BASE_PATH}/api/auth/login` : '',
-      APP_BASE_PATH ? `${origin}${APP_BASE_PATH}/login` : '',
-      `${protocol}//${hostname}:8080/api/auth/login`,
-      `${protocol}//${hostname}:8080/login`,
     ].filter(Boolean);
 
     return Array.from(new Set(urls));
   };
 
+  const handleApiLogin = async () => {
+    const loginUrls = getLoginUrlCandidates();
+    let data: any = {};
+    let lastError: Error | null = null;
+    let loginSuccess = false;
+
+    for (const loginUrl of loginUrls) {
+      try {
+        const response = await fetch(loginUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            id: p_id,
+            pwd: password,
+          }),
+        });
+
+        const rawBody = await response.text();
+        data = {};
+        if (rawBody) {
+          try {
+            data = JSON.parse(rawBody);
+          } catch {
+            data = { rawText: rawBody };
+          }
+        }
+
+        if (!response.ok) {
+          const serverMessage = data?.error || data?.message || data?.rawText || `${response.status} ${response.statusText}`;
+          if (response.status === 404) {
+            lastError = new Error(`[404] ${serverMessage}`);
+            continue;
+          }
+          throw new Error(`[${response.status}] ${serverMessage}`);
+        }
+
+        loginSuccess = !!data?.success;
+        if (!loginSuccess) {
+          const failMessage = data?.error || data?.message || data?.rawText || 'Invalid login credentials.';
+          setError(failMessage);
+          alert(`Login failed: ${failMessage}`);
+          return;
+        }
+        break;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+      }
+    }
+
+    if (!loginSuccess) {
+      throw lastError || new Error('Cannot reach login server.');
+    }
+
+    if (data?.success) {
+      saveSession(data.member || { id: p_id });
+      alert('Logged in successfully.');
+      onLogin(data?.member?.id || p_id);
+    } else {
+      const failMessage = data?.error || data?.message || data?.rawText || 'Login failed.';
+      setError(failMessage);
+      alert(`Login failed: ${failMessage}`);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!p_id || !password) {
-      setError('아이디와 비밀번호를 입력해 주세요.');
+      setError('Please enter both ID and password.');
       return;
     }
 
@@ -47,79 +114,11 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setError('');
 
     try {
-      const loginUrls = getLoginUrlCandidates();
-      let data: any = {};
-      let lastError: Error | null = null;
-      let loginSuccess = false;
-
-      for (const loginUrl of loginUrls) {
-        try {
-          const response = await fetch(loginUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            credentials: 'include',
-            body: JSON.stringify({
-              id: p_id,
-              pwd: password,
-            }),
-          });
-
-          const rawBody = await response.text();
-          data = {};
-          if (rawBody) {
-            try {
-              data = JSON.parse(rawBody);
-            } catch {
-              data = { rawText: rawBody };
-            }
-          }
-
-          if (!response.ok) {
-            const serverMessage = data?.error || data?.message || data?.rawText || `${response.status} ${response.statusText}`;
-            if (response.status === 404) {
-              lastError = new Error(`[404] ${serverMessage}`);
-              continue;
-            }
-            throw new Error(`[${response.status}] ${serverMessage}`);
-          }
-
-          loginSuccess = !!data?.success;
-          if (!loginSuccess) {
-            const failMessage = data?.error || data?.message || data?.rawText || '로그인 정보가 올바르지 않습니다.';
-            setError(failMessage);
-            alert(`로그인 실패: ${failMessage}`);
-            return;
-          }
-          break;
-        } catch (err) {
-          lastError = err instanceof Error ? err : new Error(String(err));
-        }
-      }
-
-      if (!loginSuccess) {
-        throw lastError || new Error('로그인 서버를 찾을 수 없습니다.');
-      }
-
-      if (data?.success) {
-        const expire = Date.now() + 60 * 60 * 1000;
-        localStorage.setItem('session_expire', expire.toString());
-        localStorage.setItem('member', JSON.stringify(data.member));
-        if (data?.member?.id) {
-          localStorage.setItem('login_id', data.member.id);
-        }
-        alert('로그인되었습니다!');
-        onLogin(data?.member?.id);
-      } else {
-        const failMessage = data?.error || data?.message || data?.rawText || '로그인에 실패했습니다.';
-        setError(failMessage);
-        alert(`로그인 실패: ${failMessage}`);
-      }
+      await handleApiLogin();
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : '알 수 없는 오류';
-      setError(`서버 연결 오류: ${errorMsg}`);
-      alert(`서버 연결 실패\n\n오류 상세:\n${errorMsg}`);
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      setError(`Server connection error: ${errorMsg}`);
+      alert(`Server connection failed\n\nDetails:\n${errorMsg}`);
       console.error('Login error:', err);
     } finally {
       setLoading(false);
@@ -133,11 +132,11 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid #1976d2' }}>
           <tbody>
             <tr>
-              <td style={{ backgroundColor: '#1976d2', color: 'white', width: 90, textAlign: 'center', padding: 10, border: '1px solid #1976d2' }}>아이디</td>
+              <td style={{ backgroundColor: '#1976d2', color: 'white', width: 90, textAlign: 'center', padding: 10, border: '1px solid #1976d2' }}>ID</td>
               <td style={{ padding: 10, border: '1px solid #1976d2' }}>
                 <input
                   type="text"
-                  placeholder="아이디"
+                  placeholder="ID"
                   value={p_id}
                   onChange={e => setp_id(e.target.value)}
                   style={{
@@ -155,11 +154,11 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
               </td>
             </tr>
             <tr>
-              <td style={{ backgroundColor: '#1976d2', color: 'white', width: 90, textAlign: 'center', padding: 10, border: '1px solid #1976d2' }}>비밀번호</td>
+              <td style={{ backgroundColor: '#1976d2', color: 'white', width: 90, textAlign: 'center', padding: 10, border: '1px solid #1976d2' }}>Password</td>
               <td style={{ padding: 10, border: '1px solid #1976d2', position: 'relative' }}>
                 <input
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="비밀번호"
+                  placeholder="Password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   style={{
@@ -188,14 +187,15 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     padding: 0,
                   }}
                   tabIndex={-1}
-                  aria-label={showPassword ? '비밀번호 숨기기' : '비밀번호 보기'}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
-                  {showPassword ? '숨기기' : '보기'}
+                  {showPassword ? 'Hide' : 'Show'}
                 </button>
               </td>
             </tr>
           </tbody>
         </table>
+
         <button
           type="submit"
           style={{
@@ -214,7 +214,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           }}
           disabled={loading}
         >
-          {loading ? '로그인 중...' : '로그인'}
+          {loading ? 'Signing in...' : 'Sign in'}
         </button>
         {error && <div style={{ color: 'red', marginTop: 10 }}>{error}</div>}
       </form>

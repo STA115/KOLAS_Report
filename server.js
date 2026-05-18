@@ -77,12 +77,56 @@ const configuredCorsOrigins = String(process.env.CORS_ORIGINS || process.env.COR
 	.split(',')
 	.map(origin => origin.trim())
 	.filter(Boolean);
+const normalizedConfiguredCorsOrigins = new Set(
+	configuredCorsOrigins.map(origin => origin.toLowerCase())
+);
+const isProduction = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
+const allowNullOrigin = ['1', 'true', 'yes', 'on'].includes(
+	String(process.env.ALLOW_NULL_ORIGIN || '').trim().toLowerCase()
+);
+const isPrivateIpv4Host = (hostname) => {
+	if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname)) return false;
+	const octets = hostname.split('.').map(part => Number(part));
+	if (octets.some(value => Number.isNaN(value) || value < 0 || value > 255)) return false;
+	// RFC1918 private ranges + loopback
+	if (octets[0] === 10) return true;
+	if (octets[0] === 127) return true;
+	if (octets[0] === 192 && octets[1] === 168) return true;
+	if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) return true;
+	return false;
+};
+
+const isDevLocalOrigin = (origin) => {
+	try {
+		const parsed = new URL(origin);
+		if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+		const hostname = String(parsed.hostname || '').toLowerCase();
+		if (!hostname) return false;
+		if (hostname === 'localhost') return true;
+		return isPrivateIpv4Host(hostname);
+	} catch {
+		return false;
+	}
+};
+
+const isCorsOriginAllowed = (origin) => {
+	// Allow same-origin/non-browser requests.
+	if (!origin) return true;
+	// If allow-list is empty, allow all origins.
+	if (normalizedConfiguredCorsOrigins.size === 0) return true;
+	if (normalizedConfiguredCorsOrigins.has(String(origin).toLowerCase())) return true;
+	// In non-production local dev, allow localhost/private-network origins with any port.
+	if (!isProduction && isDevLocalOrigin(origin)) return true;
+	// Optional: allow file:// pages where browser sends Origin: null.
+	if (allowNullOrigin && origin === 'null') return true;
+	return false;
+};
+
 app.use(helmet());
 app.use(cors({
 	origin: (origin, callback) => {
-		// Allow same-origin/non-browser requests and allow all origins when list is not configured.
-		if (!origin || configuredCorsOrigins.length === 0) return callback(null, true);
-		if (configuredCorsOrigins.includes(origin)) return callback(null, true);
+		if (isCorsOriginAllowed(origin)) return callback(null, true);
+		console.warn('[CORS] blocked origin:', origin);
 		return callback(new Error('Not allowed by CORS'));
 	},
 	credentials: true

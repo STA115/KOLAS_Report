@@ -10,12 +10,14 @@
     "simple-server": "node simple-backend/server.js",
     "simple-server:dev": "nodemon simple-backend/server.js",
     "build": "vite build",
+    "build:ghpages": "vite build --base /KOLAS_Report/",
     "build:intranet": "vite build --mode intranet --base /",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "predeploy": "npm run build",
     "deploy": "gh-pages -d dist",
+    "predeploy:sta115": "npm run build:ghpages",
     "deploy:sta115": "gh-pages -d dist -r https://github.com/STA115/KOLAS_REPORT.git"
   },
   "dependencies": {
