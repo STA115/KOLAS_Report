@@ -11,7 +11,8 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d dist"
+    "deploy": "gh-pages -d dist",
+    "deploy:sta115": "gh-pages -d dist -r https://github.com/STA115/KOLAS_REPORT.git"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.0",
