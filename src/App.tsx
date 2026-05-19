@@ -315,7 +315,6 @@ const EXCEL_EXPORT_COLUMNS: Array<{ header: string; key: string }> = [
 
 type ActiveTab = 'analyze' | 'accumulated' | 'summary';
 
-const APP_BASE_PATH = (((import.meta as any).env.BASE_URL || '/') as string).replace(/\/$/, '');
 const ACTIVE_TAB_STORAGE_KEY = 'active_tab';
 const formatFieldLabelForDisplay = (label: string) => (label || '').replace(/<br\s*\/?>/gi, '\n');
 
@@ -957,13 +956,14 @@ export default function App() {
   const getApiUrl = () => {
     const configuredApiBase = resolveConfiguredApiBaseUrl();
     if (configuredApiBase) return configuredApiBase;
-    const { protocol, hostname, port } = window.location;
+    const { hostname, port } = window.location;
     const isLocalFrontend = hostname === 'localhost' || hostname === '127.0.0.1';
-    const isLikelyDevFrontend = port === '5173' || port === '4173';
-    if (isLocalFrontend || isLikelyDevFrontend || protocol === 'http:') {
-      return `${protocol}//${hostname}:8080`;
+    const isLikelyDevFrontend = port === '3000' || port === '5173' || port === '4173';
+    if (isLocalFrontend && isLikelyDevFrontend) {
+      return `http://${hostname}:8080`;
     }
-    return APP_BASE_PATH || '';
+    // Same-origin mode (Express serves both frontend and API).
+    return '';
   };
 
   const fetchWithTimeout = async (url: string, init: RequestInit, timeoutMs = 120000) => {
