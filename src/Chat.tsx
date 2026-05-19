@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Loader2, MessageCircle, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { resolveConfiguredApiBaseUrl } from './utils/apiBase';
 
 interface Message {
   id: string;
@@ -9,10 +10,10 @@ interface Message {
   timestamp: Date;
 }
 
-const API_BASE_URL = (import.meta as any).env.DEV
-  ? ''
-  : (((import.meta as any).env.VITE_API_BASE_URL || '') as string).replace(/\/$/, '');
-const OPENAI_PROXY_URL = API_BASE_URL ? `${API_BASE_URL}/openai-analyze` : '/openai-analyze';
+const getOpenAiProxyUrl = () => {
+  const apiBase = resolveConfiguredApiBaseUrl();
+  return apiBase ? `${apiBase}/openai-analyze` : '/openai-analyze';
+};
 
 export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([
@@ -51,7 +52,7 @@ export default function Chat() {
 
     try {
       // OpenAI API 호출
-      const response = await fetch(OPENAI_PROXY_URL, {
+      const response = await fetch(getOpenAiProxyUrl(), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

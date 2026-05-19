@@ -17,3 +17,9 @@ Intranet same-origin guide: see INTRANET_DEPLOY.md.
 4. Run backend and frontend:
    - `npm run server`
    - `npm run dev`
+
+## GitHub Pages Login
+
+- GitHub Pages is static hosting, so login requires a separate backend URL.
+- You can set backend URL on the Login screen (`Backend URL`) without rebuilding.
+- Example: `https://your-backend.onrender.com`

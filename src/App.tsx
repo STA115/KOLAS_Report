@@ -56,6 +56,7 @@ import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import PptxGenJS from 'pptxgenjs';
 import Login from './Login';
+import { resolveConfiguredApiBaseUrl } from './utils/apiBase';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -314,9 +315,6 @@ const EXCEL_EXPORT_COLUMNS: Array<{ header: string; key: string }> = [
 
 type ActiveTab = 'analyze' | 'accumulated' | 'summary';
 
-const API_BASE_URL = (import.meta as any).env.DEV
-  ? ''
-  : (((import.meta as any).env.VITE_API_BASE_URL || '') as string).replace(/\/$/, '');
 const APP_BASE_PATH = (((import.meta as any).env.BASE_URL || '/') as string).replace(/\/$/, '');
 const ACTIVE_TAB_STORAGE_KEY = 'active_tab';
 const formatFieldLabelForDisplay = (label: string) => (label || '').replace(/<br\s*\/?>/gi, '\n');
@@ -957,7 +955,8 @@ export default function App() {
 
   // API 기본 URL 생성
   const getApiUrl = () => {
-    if (API_BASE_URL) return API_BASE_URL;
+    const configuredApiBase = resolveConfiguredApiBaseUrl();
+    if (configuredApiBase) return configuredApiBase;
     const { protocol, hostname, port } = window.location;
     const isLocalFrontend = hostname === 'localhost' || hostname === '127.0.0.1';
     const isLikelyDevFrontend = port === '5173' || port === '4173';
