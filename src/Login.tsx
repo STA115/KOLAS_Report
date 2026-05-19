@@ -12,9 +12,11 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [loading, setLoading] = useState(false);
 
   const env = ((import.meta as any).env || {}) as Record<string, unknown>;
-  const API_BASE_URL = env.DEV
+  const isDev = Boolean(env.DEV);
+  const API_BASE_URL = isDev
     ? ''
     : String(env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+  const isGithubPages = typeof window !== 'undefined' && window.location.hostname.endsWith('github.io');
 
   const saveSession = (member: { id?: string; email?: string; admin_flag?: string }) => {
     const expire = Date.now() + 60 * 60 * 1000;
@@ -26,18 +28,25 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   };
 
   const getLoginUrlCandidates = () => {
-    const urls = [
-      API_BASE_URL ? `${API_BASE_URL}/api/auth/login` : '',
-      API_BASE_URL ? `${API_BASE_URL}/login` : '',
-      '/api/auth/login',
-      '/login',
-    ].filter(Boolean);
+    const urls = API_BASE_URL
+      ? [`${API_BASE_URL}/api/auth/login`, `${API_BASE_URL}/login`]
+      : isDev
+        ? ['/api/auth/login', '/login']
+        : isGithubPages
+          ? []
+          : ['/api/auth/login', '/login'];
 
     return Array.from(new Set(urls));
   };
 
   const handleApiLogin = async () => {
     const loginUrls = getLoginUrlCandidates();
+    if (loginUrls.length === 0) {
+      throw new Error(
+        'VITE_API_BASE_URL is empty. For GitHub Pages, set VITE_API_BASE_URL to your backend URL and rebuild.',
+      );
+    }
+
     let data: any = {};
     let lastError: Error | null = null;
     let loginSuccess = false;
@@ -68,8 +77,8 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
         if (!response.ok) {
           const serverMessage = data?.error || data?.message || data?.rawText || `${response.status} ${response.statusText}`;
-          if (response.status === 404) {
-            lastError = new Error(`[404] ${serverMessage}`);
+          if (response.status === 404 || response.status === 405) {
+            lastError = new Error(`[${response.status}] ${serverMessage}`);
             continue;
           }
           throw new Error(`[${response.status}] ${serverMessage}`);
