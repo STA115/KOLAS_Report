@@ -47,8 +47,8 @@ export const getEnvApiBaseUrl = () =>
   normalize(((import.meta as any).env?.VITE_API_BASE_URL || '') as string);
 
 export const resolveConfiguredApiBaseUrl = () =>
-  getRuntimeApiBaseUrl() ||
-  getEnvApiBaseUrl();
+  getEnvApiBaseUrl() ||
+  getRuntimeApiBaseUrl();
 
 export const setRuntimeApiBaseUrl = (value: string) => {
   const normalized = normalize(value);
@@ -62,4 +62,3 @@ export const clearRuntimeApiBaseUrl = () => {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(API_BASE_STORAGE_KEY);
 };
-

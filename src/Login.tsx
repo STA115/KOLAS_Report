@@ -1,10 +1,5 @@
 import React, { useState } from 'react';
-import {
-  clearRuntimeApiBaseUrl,
-  isGithubPagesHost,
-  resolveConfiguredApiBaseUrl,
-  setRuntimeApiBaseUrl,
-} from './utils/apiBase';
+import { getEnvApiBaseUrl, isGithubPagesHost, resolveConfiguredApiBaseUrl } from './utils/apiBase';
 
 interface LoginProps {
   onLogin: (id?: string) => void;
@@ -16,10 +11,10 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [apiBaseInput, setApiBaseInput] = useState(resolveConfiguredApiBaseUrl());
-  const [apiBaseNotice, setApiBaseNotice] = useState('');
+
   const isDev = Boolean((import.meta as any).env?.DEV);
   const isGithubPages = isGithubPagesHost();
+  const envApiBase = getEnvApiBaseUrl();
 
   const saveSession = (member: { id?: string; email?: string; admin_flag?: string }) => {
     const expire = Date.now() + 60 * 60 * 1000;
@@ -31,14 +26,17 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   };
 
   const getLoginUrlCandidates = () => {
+    if (isGithubPages) {
+      if (!envApiBase) return [];
+      return Array.from(new Set([`${envApiBase}/api/auth/login`, `${envApiBase}/login`]));
+    }
+
     const apiBase = resolveConfiguredApiBaseUrl();
     const urls = apiBase
       ? [`${apiBase}/api/auth/login`, `${apiBase}/login`]
       : isDev
         ? ['/api/auth/login', '/login']
-        : isGithubPages
-          ? []
-          : ['/api/auth/login', '/login'];
+        : ['/api/auth/login', '/login'];
 
     return Array.from(new Set(urls));
   };
@@ -47,7 +45,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     const loginUrls = getLoginUrlCandidates();
     if (loginUrls.length === 0) {
       throw new Error(
-        '백엔드 URL이 비어 있습니다. 로그인창의 Backend URL에 https://<백엔드도메인> 입력 후 저장해 주세요.',
+        'Admin setup required: set VITE_API_BASE_URL to backend URL and redeploy GitHub Pages.',
       );
     }
 
@@ -138,84 +136,13 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     }
   };
 
-  const handleSaveApiBase = () => {
-    try {
-      const saved = setRuntimeApiBaseUrl(apiBaseInput);
-      if (!saved) {
-        setApiBaseNotice('유효한 URL을 입력하세요. 예: https://your-backend.onrender.com');
-        return;
-      }
-      setApiBaseInput(saved);
-      setApiBaseNotice(`저장 완료: ${saved}`);
-      setError('');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setApiBaseNotice(`저장 실패: ${message}`);
-    }
-  };
-
-  const handleClearApiBase = () => {
-    clearRuntimeApiBaseUrl();
-    setApiBaseInput('');
-    setApiBaseNotice('저장된 Backend URL을 삭제했습니다.');
-  };
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh' }}>
       <div style={{ fontSize: 32, fontWeight: 'bold', marginBottom: 32, color: '#1976d2', letterSpacing: 2, textAlign: 'center' }}>KOLAS</div>
       <form onSubmit={handleSubmit} style={{ width: 320 }}>
-        {isGithubPages && (
-          <div style={{ marginBottom: 12, border: '1px solid #90caf9', borderRadius: 6, padding: 10, background: '#f3f9ff' }}>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6, color: '#0d47a1' }}>Backend URL</div>
-            <input
-              type="text"
-              placeholder="https://your-backend-domain"
-              value={apiBaseInput}
-              onChange={e => setApiBaseInput(e.target.value)}
-              style={{
-                width: '100%',
-                padding: 8,
-                border: '1.5px solid #1976d2',
-                borderRadius: 4,
-                background: 'white',
-                fontSize: 14,
-                outline: 'none',
-                marginBottom: 8,
-              }}
-            />
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button
-                type="button"
-                onClick={handleSaveApiBase}
-                style={{
-                  padding: '6px 10px',
-                  backgroundColor: '#1976d2',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: 4,
-                  fontSize: 13,
-                  cursor: 'pointer',
-                }}
-              >
-                Save URL
-              </button>
-              <button
-                type="button"
-                onClick={handleClearApiBase}
-                style={{
-                  padding: '6px 10px',
-                  backgroundColor: '#e3f2fd',
-                  color: '#0d47a1',
-                  border: '1px solid #90caf9',
-                  borderRadius: 4,
-                  fontSize: 13,
-                  cursor: 'pointer',
-                }}
-              >
-                Clear
-              </button>
-            </div>
-            {apiBaseNotice && <div style={{ marginTop: 6, fontSize: 12, color: '#0d47a1' }}>{apiBaseNotice}</div>}
+        {isGithubPages && !envApiBase && (
+          <div style={{ marginBottom: 12, border: '1px solid #90caf9', borderRadius: 6, padding: 10, background: '#f3f9ff', color: '#0d47a1', fontSize: 13 }}>
+            Admin setup required: set `VITE_API_BASE_URL` and redeploy.
           </div>
         )}
 

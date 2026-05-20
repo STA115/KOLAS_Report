@@ -21,5 +21,5 @@ Intranet same-origin guide: see INTRANET_DEPLOY.md.
 ## GitHub Pages Login
 
 - GitHub Pages is static hosting, so login requires a separate backend URL.
-- You can set backend URL on the Login screen (`Backend URL`) without rebuilding.
-- Example: `https://your-backend.onrender.com`
+- Use fixed backend mode by setting `VITE_API_BASE_URL=https://your-backend.onrender.com`.
+- After changing env, rebuild and redeploy pages (`npm run deploy:sta115`).
